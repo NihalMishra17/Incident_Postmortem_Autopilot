@@ -1,0 +1,8 @@
+weaviate-client==4.9.3
+neo4j==5.27.0
+dspy-ai==2.5.37
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+confluent-kafka==2.6.1
+faker==34.0.0
+pydantic==2.10.6

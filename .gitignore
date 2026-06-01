@@ -1,0 +1,14 @@
+.env
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.DS_Store
+*.log
+.pytest_cache/
+data/neo4j/
+data/weaviate/
+data/kafka/
+.idea/
+.vscode/
