@@ -1,6 +1,6 @@
 """Weaviate client and schema management for incident embedding storage."""
 import weaviate
-from weaviate.classes.config import Configure, Property, DataType
+from weaviate.classes.config import Configure, Property, DataType, VectorDistances
 
 
 def get_client(host='localhost', port=8080):
@@ -21,8 +21,12 @@ def init_schema(client):
             Property(name="root_cause", data_type=DataType.TEXT),
             Property(name="fix", data_type=DataType.TEXT),
             Property(name="service", data_type=DataType.TEXT),
-            Property(name="embedding", data_type=DataType.NUMBER_ARRAY),
-        ]
+        ],
+        vectorizer_config=Configure.Vectorizer.none(),
+        vector_index_config=Configure.VectorIndex.hnsw(
+            distance_metric=VectorDistances.COSINE,
+            # Expects 768-dim vectors from text-embedding-004; inferred on first insert
+        ),
     )
     print("PastIncident collection created")
 

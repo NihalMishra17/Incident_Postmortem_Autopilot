@@ -1,4 +1,6 @@
 """Populates Weaviate with historical incident data for correlation and RCA."""
+import os
+from google import genai
 from infra.weaviate_client import get_client, init_schema, close_client
 
 
@@ -48,8 +50,20 @@ if __name__ == "__main__":
         close_client(client)
         exit(0)
 
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        print("Error: GEMINI_API_KEY environment variable is required")
+        close_client(client)
+        exit(1)
+    genai_client = genai.Client(api_key=api_key)
+
     for incident in INCIDENTS:
-        collection.data.insert(properties=incident)
+        text = f"{incident['title']}. {incident['root_cause']}. {incident['fix']}"
+        result = genai_client.models.embed_content(
+            model="models/text-embedding-004", contents=text
+        )
+        vector = result.embeddings[0].values
+        collection.data.insert(properties=incident, vector=vector)
 
     print(f"Seeded {len(INCIDENTS)} incidents into Weaviate")
     close_client(client)

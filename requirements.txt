@@ -6,3 +6,4 @@ uvicorn[standard]==0.34.0
 confluent-kafka==2.6.1
 faker==34.0.0
 pydantic==2.10.6
+google-genai==2.7.0
