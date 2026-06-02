@@ -12,3 +12,4 @@ data/weaviate/
 data/kafka/
 .idea/
 .vscode/
+.claude/memory.md

@@ -18,6 +18,7 @@ When user says done/wrapping up/stopping:
 2. **planner** — produce execution plan, no code
 3. **code-reviewer** — review plan. Loop back to planner if NEEDS REVISION
 4. **dependency-reviewer** — only if plan touches requirements.txt / pyproject.toml / package.json
+   ⚠️ PAUSE: show the final approved plan to the user and wait for explicit approval ("looks good", "proceed", "yes") before continuing. Do not auto-advance to the implementer.
 5. **implementer** — execute approved plan only
 6. **env-checker** — run after every implementation, no exceptions
 7. **test-writer** — write and run tests
