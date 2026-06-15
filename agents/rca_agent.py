@@ -28,7 +28,7 @@ class RCAAgent:
     """Synthesizes alert, blast radius, and historical incidents into structured root cause analysis."""
     def __init__(self):
         lm = dspy.LM(
-            f"google/{os.getenv('GEMINI_MODEL', 'gemini-2.0-flash')}",
+            f"gemini/{os.getenv('GEMINI_MODEL', 'gemini-2.0-flash')}",
             api_key=os.getenv("GEMINI_API_KEY"),
             num_retries=5,
         )

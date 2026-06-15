@@ -49,7 +49,7 @@ INCIDENTS = [
 def _embed_text(genai_client, text: str) -> list[float]:
     """Embed text using Gemini with exponential backoff retry on rate limits."""
     result = genai_client.models.embed_content(
-        model="models/text-embedding-004", contents=text
+        model="models/gemini-embedding-001", contents=text
     )
     return result.embeddings[0].values
 

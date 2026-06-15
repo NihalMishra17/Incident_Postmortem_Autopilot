@@ -18,14 +18,24 @@ When user says done/wrapping up/stopping:
 2. **planner** — produce execution plan, no code
 3. **code-reviewer** — review plan. Loop back to planner if NEEDS REVISION
 4. **dependency-reviewer** — only if plan touches requirements.txt / pyproject.toml / package.json
+   - Must audit the FULL installed dependency tree for conflicts, not just the new addition
+   - Must run `pip check` to surface hidden conflicts between existing packages
+   - Must verify any script in `data/` or `scripts/` can be invoked with `PYTHONPATH=. python <script>` without import errors
    ⚠️ PAUSE: show the final approved plan to the user and wait for explicit approval ("looks good", "proceed", "yes") before continuing. Do not auto-advance to the implementer.
 5. **implementer** — execute approved plan only
 6. **env-checker** — run after every implementation, no exceptions
 7. **test-writer** — write and run tests
 8. **security-auditor** — BLOCK restarts from step 2
 9. **code-reviewer** — review diff. NEEDS REVISION reruns steps 6–9
-10. **doc-writer** — docstrings, README, comments
-11. **git-agent** — commit message (confirm before committing) + PR description
+   - If docker-compose.yml changed: explicitly verify no `env_file` passes project-level env vars to services that use strict config validation (e.g. Neo4j, Kafka). Verify all added services start and pass their healthcheck.
+10. **runtime-checker** — MANDATORY, no exceptions
+   - Boot the relevant stack subset (`docker compose up -d` if infra changed)
+   - Exercise the changed code path with a real invocation (curl, python script, etc.)
+   - Verify: no import errors, no runtime crashes, no integration failures
+   - If anything fails: loop back to implementer (step 5), fix root cause, rerun steps 6–10
+   - BLOCKS doc-writer — do not proceed if runtime-checker fails
+11. **doc-writer** — docstrings, README, comments
+12. **git-agent** — commit message (confirm before committing) + PR description
 
 ## On-demand agents
 - `debugger` — before any bug fix; restart pipeline after root cause found

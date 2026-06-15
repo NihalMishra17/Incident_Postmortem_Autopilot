@@ -1,4 +1,4 @@
-weaviate-client==4.9.3
+weaviate-client==4.10.4
 neo4j==5.27.0
 dspy-ai==2.5.37
 fastapi==0.115.6

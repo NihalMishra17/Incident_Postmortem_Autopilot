@@ -29,7 +29,7 @@ class CorrelationAgent:
     def _embed_query(self, query: str) -> list[float]:
         """Embed query text using Gemini with exponential backoff retry on rate limits."""
         result = self.genai_client.models.embed_content(
-            model="models/text-embedding-004", contents=query
+            model="models/gemini-embedding-001", contents=query
         )
         return result.embeddings[0].values
 
