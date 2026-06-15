@@ -204,8 +204,12 @@ CORS_ORIGINS=http://localhost:3000
 
 - **In-memory cache** — Postmortems are cached in the FastAPI process and lost on restart. For persistence, integrate a database.
 - **Single-instance pipeline** — The agent pipeline runs on one process. For horizontal scaling, use Kafka consumer groups.
-- **No rate limiting** — API endpoints are not rate-limited. Add throttling for production use.
+- **No API rate limiting** — API endpoints are not rate-limited. Add throttling for production use.
 - **Synchronous processing** — Agents process alerts sequentially. For high-throughput scenarios, parallelize via multiple Kafka partitions and consumer group instances.
+
+## Gemini Rate Limit Handling
+
+The **CorrelationAgent** and **RCAAgent** implement exponential backoff retry logic using Tenacity for Gemini API rate limits (HTTP 429). Requests are retried up to 5 times with backoff between 1–60 seconds. Data seeding via `seed_weaviate.py` also uses the same retry mechanism.
 
 ## Development
 

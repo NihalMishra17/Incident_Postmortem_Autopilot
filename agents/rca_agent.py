@@ -30,6 +30,7 @@ class RCAAgent:
         lm = dspy.LM(
             f"google/{os.getenv('GEMINI_MODEL', 'gemini-2.0-flash')}",
             api_key=os.getenv("GEMINI_API_KEY"),
+            num_retries=5,
         )
         # dspy.configure() sets the global LM for all DSPy operations in this agent
         dspy.configure(lm=lm)

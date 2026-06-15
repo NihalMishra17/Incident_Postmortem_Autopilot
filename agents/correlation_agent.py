@@ -2,6 +2,8 @@
 import logging
 import os
 from google import genai
+from google.genai.errors import ClientError
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
 from infra.weaviate_client import get_client
 
 logger = logging.getLogger(__name__)
@@ -18,13 +20,23 @@ class CorrelationAgent:
         incidents = self._find_similar(query)
         return {**alert, "correlated_incidents": incidents}
 
+    @retry(
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=1, min=1, max=60),
+        retry=retry_if_exception(lambda e: isinstance(e, ClientError) and e.code == 429),
+        reraise=True,
+    )
+    def _embed_query(self, query: str) -> list[float]:
+        """Embed query text using Gemini with exponential backoff retry on rate limits."""
+        result = self.genai_client.models.embed_content(
+            model="models/text-embedding-004", contents=query
+        )
+        return result.embeddings[0].values
+
     def _find_similar(self, query: str) -> list[dict]:
         """Embed alert text using Gemini and query Weaviate for top-3 similar past incidents."""
         try:
-            result = self.genai_client.models.embed_content(
-                model="models/text-embedding-004", contents=query
-            )
-            vector = result.embeddings[0].values
+            vector = self._embed_query(query)
             response = self.collection.query.near_vector(
                 near_vector=vector,
                 limit=3,
