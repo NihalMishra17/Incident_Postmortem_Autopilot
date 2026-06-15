@@ -89,6 +89,21 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    image: redis:7.2-alpine
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks:
+      - incident-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
 networks:
   incident-net:
     driver: bridge
@@ -98,3 +113,4 @@ volumes:
   kafka_data:
   weaviate_data:
   neo4j_data:
+  redis_data:

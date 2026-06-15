@@ -26,7 +26,7 @@ cp .env.example .env
 docker-compose up -d
 ```
 
-Starts Kafka, Weaviate, and Neo4j on their default ports.
+Starts Kafka, Weaviate, Neo4j, and Redis on their default ports. Redis provides persistent caching with TTL-based expiration.
 
 ### 3. Install dependencies
 
@@ -105,11 +105,12 @@ curl http://localhost:8000/postmortems/{incident_id}
          │
 postmortems topic
          │
-    ┌────▼──────────┐
-    │   FastAPI     │
-    │   (cache +    │
-    │    REST API)  │
-    └───────────────┘
+    ┌────▼──────────────────┐
+    │   FastAPI (REST API)  │
+    │        ↓              │
+    │   Redis (persistent   │
+    │   cache, TTL)         │
+    └───────────────────────┘
 ```
 
 ## Kafka Topics
@@ -196,13 +197,18 @@ WEAVIATE_PORT=8080
 GEMINI_API_KEY=<your-api-key>
 GEMINI_MODEL=gemini-2.0-flash
 
+# Redis Cache
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_PASSWORD=
+REDIS_TTL=86400
+
 # API Configuration
 CORS_ORIGINS=http://localhost:3000
 ```
 
 ## Known Limitations
 
-- **In-memory cache** — Postmortems are cached in the FastAPI process and lost on restart. For persistence, integrate a database.
 - **Single-instance pipeline** — The agent pipeline runs on one process. For horizontal scaling, use Kafka consumer groups.
 - **No API rate limiting** — API endpoints are not rate-limited. Add throttling for production use.
 - **Synchronous processing** — Agents process alerts sequentially. For high-throughput scenarios, parallelize via multiple Kafka partitions and consumer group instances.

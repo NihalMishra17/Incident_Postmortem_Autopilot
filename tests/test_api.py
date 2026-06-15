@@ -1,7 +1,9 @@
 import pytest
+import json
 from fastapi.testclient import TestClient
 from unittest.mock import MagicMock, patch
-from api.main import app, postmortems, postmortems_lock
+from redis.exceptions import RedisError
+from api.main import app
 
 
 @pytest.fixture
@@ -10,19 +12,13 @@ def client():
     return TestClient(app)
 
 
-@pytest.fixture(autouse=True)
-def clear_postmortems():
-    """Clear postmortems dict before each test."""
-    with postmortems_lock:
-        postmortems.clear()
-    yield
-    with postmortems_lock:
-        postmortems.clear()
-
-
 def test_list_postmortems_empty(client):
     """GET /postmortems with empty store should return empty list."""
-    response = client.get("/postmortems")
+    mock_redis = MagicMock()
+    mock_redis.smembers.return_value = set()
+
+    with patch("api.main._redis_client", mock_redis):
+        response = client.get("/postmortems")
 
     assert response.status_code == 200
     assert response.json() == []
@@ -30,7 +26,11 @@ def test_list_postmortems_empty(client):
 
 def test_get_postmortem_not_found(client):
     """GET /postmortems/{id} for nonexistent ID should return 404."""
-    response = client.get("/postmortems/nonexistent-id")
+    mock_redis = MagicMock()
+    mock_redis.get.return_value = None
+
+    with patch("api.main._redis_client", mock_redis):
+        response = client.get("/postmortems/nonexistent-id")
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Postmortem not found"
@@ -89,19 +89,15 @@ def test_trigger_missing_field(client):
 
 def test_list_postmortems_with_data(client):
     """GET /postmortems should return all stored postmortems."""
-    with postmortems_lock:
-        postmortems["pm-1"] = {
-            "incident_id": "pm-1",
-            "title": "Database Outage",
-            "severity": "critical",
-        }
-        postmortems["pm-2"] = {
-            "incident_id": "pm-2",
-            "title": "Cache Miss Rate Spike",
-            "severity": "high",
-        }
+    pm1 = {"incident_id": "pm-1", "title": "Database Outage", "severity": "critical"}
+    pm2 = {"incident_id": "pm-2", "title": "Cache Miss Rate Spike", "severity": "high"}
 
-    response = client.get("/postmortems")
+    mock_redis = MagicMock()
+    mock_redis.smembers.return_value = {"pm-1", "pm-2"}
+    mock_redis.mget.return_value = [json.dumps(pm1), json.dumps(pm2)]
+
+    with patch("api.main._redis_client", mock_redis):
+        response = client.get("/postmortems")
 
     assert response.status_code == 200
     data = response.json()
@@ -112,15 +108,18 @@ def test_list_postmortems_with_data(client):
 
 def test_get_postmortem_success(client):
     """GET /postmortems/{id} for existing ID should return postmortem."""
-    with postmortems_lock:
-        postmortems["pm-123"] = {
-            "incident_id": "pm-123",
-            "title": "API Gateway Latency",
-            "severity": "critical",
-            "root_cause": "Connection pool exhausted",
-        }
+    pm = {
+        "incident_id": "pm-123",
+        "title": "API Gateway Latency",
+        "severity": "critical",
+        "root_cause": "Connection pool exhausted",
+    }
 
-    response = client.get("/postmortems/pm-123")
+    mock_redis = MagicMock()
+    mock_redis.get.return_value = json.dumps(pm)
+
+    with patch("api.main._redis_client", mock_redis):
+        response = client.get("/postmortems/pm-123")
 
     assert response.status_code == 200
     data = response.json()
@@ -149,3 +148,27 @@ def test_trigger_default_severity(client):
     mock_producer.produce.assert_called_once()
     call_args = mock_producer.produce.call_args
     assert call_args is not None
+
+
+def test_list_postmortems_redis_error(client):
+    """GET /postmortems should return 503 when Redis is unavailable."""
+    mock_redis = MagicMock()
+    mock_redis.smembers.side_effect = RedisError("Connection timeout")
+
+    with patch("api.main._redis_client", mock_redis):
+        response = client.get("/postmortems")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Cache unavailable"
+
+
+def test_get_postmortem_redis_error(client):
+    """GET /postmortems/{id} should return 503 when Redis is unavailable."""
+    mock_redis = MagicMock()
+    mock_redis.get.side_effect = RedisError("Connection timeout")
+
+    with patch("api.main._redis_client", mock_redis):
+        response = client.get("/postmortems/test-id")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Cache unavailable"

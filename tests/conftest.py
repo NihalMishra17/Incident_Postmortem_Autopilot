@@ -41,3 +41,16 @@ def mock_neo4j_driver():
     session.__exit__ = MagicMock(return_value=False)
     driver.close = MagicMock()
     return driver
+
+
+@pytest.fixture
+def mock_redis_client():
+    """Mock Redis client with common methods."""
+    client = MagicMock()
+    client.get = MagicMock(return_value=None)
+    client.set = MagicMock(return_value=True)
+    client.sadd = MagicMock(return_value=1)
+    client.smembers = MagicMock(return_value=set())
+    client.mget = MagicMock(return_value=[])
+    client.close = MagicMock()
+    return client
