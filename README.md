@@ -144,11 +144,11 @@ Returns all cached postmortems.
 
 ### GET `/postmortems/{incident_id}`
 
-Returns a specific postmortem.
+Returns a specific postmortem by ID.
 
 ### POST `/postmortems/trigger`
 
-Triggers postmortem analysis for a new alert.
+Triggers postmortem analysis for a new alert (returns 202 Accepted immediately).
 
 **Request:**
 ```json
@@ -163,19 +163,58 @@ Triggers postmortem analysis for a new alert.
 ```json
 {
   "alert_id": "...",
-  "status": "processing"
+  "status": "queued"
 }
 ```
+
+### PATCH `/postmortems/{incident_id}/verify`
+
+Verifies an AI-generated postmortem with engineer-confirmed root cause and fix. Embeds the verified data into Weaviate for future incident correlation. Only the first verification is persisted to Weaviate; subsequent attempts on the same postmortem are rejected with 409 Conflict.
+
+**Request:**
+```json
+{
+  "confirmed_root_cause": "Max connections reached due to connection leak in ORM layer",
+  "confirmed_fix": "Patched connection cleanup and deployed hotfix to production",
+  "verified_by": "john.doe@example.com"
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "incident_id": "...",
+  "title": "Database connection pool exhaustion",
+  "root_cause": "...",
+  "fix": "...",
+  "affected_services": ["api-gateway", "user-service"],
+  "verified": true,
+  "verified_by": "john.doe@example.com",
+  "verified_at": "2026-06-16T14:30:00Z",
+  "confirmed_root_cause": "Max connections reached due to connection leak in ORM layer",
+  "confirmed_fix": "Patched connection cleanup and deployed hotfix to production"
+}
+```
+
+**Error Responses:**
+- `404 Not Found` — incident_id not found in cache
+- `409 Conflict` — postmortem already verified (prevents duplicate Weaviate entries)
+- `500 Internal Server Error` — postmortem record missing title
+- `503 Service Unavailable` — Redis, Weaviate, or Gemini embedding service unavailable
 
 ## Agent Flow
 
 1. **TriageAgent** — Classifies severity (P1→critical, P2→high, P3→medium) and queries Neo4j for affected services (3-hop blast radius via DEPENDS_ON|CALLS edges).
 
-2. **CorrelationAgent** — Embeds alert description using Gemini `text-embedding-004`, searches Weaviate for top-3 similar past incidents.
+2. **CorrelationAgent** — Embeds alert description using Gemini `gemini-embedding-001`, searches Weaviate for top-3 similar past incidents.
 
 3. **RCAAgent** — Synthesizes logs, dependency graph, and historical incidents using DSPy ChainOfThought and Gemini LLM.
 
 4. **PostmortemWriter** — Generates structured postmortem object and publishes to Kafka `postmortems` topic.
+
+## Human Verification Loop
+
+AI-generated postmortems are cached in Redis but **never** written to Weaviate until a human verifies them. The verification endpoint (`PATCH /postmortems/{incident_id}/verify`) accepts engineer-confirmed root cause and fix, embeds them, and upserts a single entry into the Weaviate `PastIncident` collection. This is the **only** code path in the repo that writes verified incidents to Weaviate (besides the one-time `data/seed_weaviate.py` seed script). Duplicate verification is prevented by rejecting postmortems that are already marked `verified=true` (409 Conflict).
 
 ## Environment Variables
 
@@ -193,7 +232,7 @@ KAFKA_BOOTSTRAP_SERVERS=localhost:9092
 WEAVIATE_HOST=localhost
 WEAVIATE_PORT=8080
 
-# Gemini API
+# Gemini API (required for embeddings and LLM)
 GEMINI_API_KEY=<your-api-key>
 GEMINI_MODEL=gemini-2.0-flash
 

@@ -25,7 +25,7 @@ def init_schema(client):
         vectorizer_config=Configure.Vectorizer.none(),
         vector_index_config=Configure.VectorIndex.hnsw(
             distance_metric=VectorDistances.COSINE,
-            # Expects 768-dim vectors from text-embedding-004; inferred on first insert
+            # Expects vectors from gemini-embedding-001; dimension inferred on first insert
         ),
     )
     print("PastIncident collection created")

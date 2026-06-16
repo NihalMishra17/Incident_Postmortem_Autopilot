@@ -1,9 +1,9 @@
 import pytest
 import json
 from fastapi.testclient import TestClient
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, call
 from redis.exceptions import RedisError
-from api.main import app
+from api.main import app, startup
 
 
 @pytest.fixture
@@ -172,3 +172,479 @@ def test_get_postmortem_redis_error(client):
 
     assert response.status_code == 503
     assert response.json()["detail"] == "Cache unavailable"
+
+
+# ============================
+# PATCH /postmortems/{incident_id}/verify tests
+# ============================
+
+
+def test_verify_postmortem_happy_path(client):
+    """PATCH /postmortems/{id}/verify with valid data should return 200 with verified fields and call Weaviate insert."""
+    pm = {
+        "incident_id": "pm-verify-1",
+        "title": "Database Connection Pool Exhausted",
+        "severity": "critical",
+        "affected_services": ["auth-service", "user-service"],
+    }
+
+    mock_redis = MagicMock()
+    # First GET call returns the original postmortem
+    mock_redis.get.return_value = json.dumps(pm)
+    # Second SET call (after verification) succeeds
+    mock_redis.set.return_value = True
+
+    mock_weaviate = MagicMock()
+    mock_collection = MagicMock()
+    mock_weaviate.collections.get.return_value = mock_collection
+
+    mock_genai_client = MagicMock()
+    mock_result = MagicMock()
+    mock_embedding = MagicMock()
+    mock_embedding.values = [0.1] * 768
+    mock_result.embeddings = [mock_embedding]
+    mock_genai_client.models.embed_content.return_value = mock_result
+
+    with patch("api.main._redis_client", mock_redis), \
+         patch("api.main._weaviate_client", mock_weaviate), \
+         patch("api.main.genai.Client", return_value=mock_genai_client), \
+         patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}):
+        response = client.patch(
+            "/postmortems/pm-verify-1/verify",
+            json={
+                "confirmed_root_cause": "Max connections reached due to connection leak",
+                "confirmed_fix": "Patched connection cleanup in ORM layer",
+                "verified_by": "john.doe@example.com",
+            },
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["verified"] is True
+    assert data["verified_by"] == "john.doe@example.com"
+    assert "verified_at" in data
+    assert data["confirmed_root_cause"] == "Max connections reached due to connection leak"
+    assert data["confirmed_fix"] == "Patched connection cleanup in ORM layer"
+    assert data["incident_id"] == "pm-verify-1"
+    assert data["title"] == "Database Connection Pool Exhausted"
+
+    # Verify Weaviate insert was called with correct args
+    mock_collection.data.insert.assert_called_once()
+    insert_args = mock_collection.data.insert.call_args
+    assert insert_args[1]["properties"]["title"] == "Database Connection Pool Exhausted"
+    assert insert_args[1]["properties"]["root_cause"] == "Max connections reached due to connection leak"
+    assert insert_args[1]["properties"]["fix"] == "Patched connection cleanup in ORM layer"
+    assert insert_args[1]["properties"]["service"] == "auth-service, user-service"
+    assert insert_args[1]["vector"] == [0.1] * 768
+
+    # Verify Redis set was called with TTL
+    mock_redis.set.assert_called_once()
+    set_call = mock_redis.set.call_args
+    assert set_call[0][0] == "postmortem:pm-verify-1"
+    stored_pm = json.loads(set_call[0][1])
+    assert stored_pm["verified"] is True
+    assert set_call[1]["ex"] == 86400
+
+
+def test_verify_postmortem_not_found(client):
+    """PATCH /postmortems/{id}/verify for nonexistent ID should return 404."""
+    mock_redis = MagicMock()
+    mock_redis.get.return_value = None
+
+    with patch("api.main._redis_client", mock_redis):
+        response = client.patch(
+            "/postmortems/nonexistent-id/verify",
+            json={
+                "confirmed_root_cause": "Root cause here",
+                "confirmed_fix": "Fix here",
+                "verified_by": "user@example.com",
+            },
+        )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Postmortem not found"
+
+
+def test_verify_postmortem_already_verified(client):
+    """PATCH /postmortems/{id}/verify for already-verified postmortem should return 409 and not call Weaviate."""
+    pm = {
+        "incident_id": "pm-already-verified",
+        "title": "Cache Outage",
+        "verified": True,
+        "verified_by": "jane.smith@example.com",
+        "verified_at": "2026-06-15T10:30:00Z",
+    }
+
+    mock_redis = MagicMock()
+    mock_redis.get.return_value = json.dumps(pm)
+
+    mock_weaviate = MagicMock()
+    mock_collection = MagicMock()
+    mock_weaviate.collections.get.return_value = mock_collection
+
+    with patch("api.main._redis_client", mock_redis), \
+         patch("api.main._weaviate_client", mock_weaviate):
+        response = client.patch(
+            "/postmortems/pm-already-verified/verify",
+            json={
+                "confirmed_root_cause": "New root cause",
+                "confirmed_fix": "New fix",
+                "verified_by": "another@example.com",
+            },
+        )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Postmortem already verified"
+
+    # Ensure Weaviate insert was NOT called (409 short-circuits)
+    mock_collection.data.insert.assert_not_called()
+
+
+def test_verify_postmortem_missing_title(client):
+    """PATCH /postmortems/{id}/verify for postmortem without title should return 500."""
+    pm = {
+        "incident_id": "pm-no-title",
+        "severity": "critical",
+        # title is missing
+    }
+
+    mock_redis = MagicMock()
+    mock_redis.get.return_value = json.dumps(pm)
+
+    with patch("api.main._redis_client", mock_redis):
+        response = client.patch(
+            "/postmortems/pm-no-title/verify",
+            json={
+                "confirmed_root_cause": "Root cause",
+                "confirmed_fix": "Fix",
+                "verified_by": "user@example.com",
+            },
+        )
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == "Postmortem record is missing a title"
+
+
+def test_verify_postmortem_empty_title(client):
+    """PATCH /postmortems/{id}/verify for postmortem with empty title should return 500."""
+    pm = {
+        "incident_id": "pm-empty-title",
+        "title": "",
+        "severity": "critical",
+    }
+
+    mock_redis = MagicMock()
+    mock_redis.get.return_value = json.dumps(pm)
+
+    with patch("api.main._redis_client", mock_redis):
+        response = client.patch(
+            "/postmortems/pm-empty-title/verify",
+            json={
+                "confirmed_root_cause": "Root cause",
+                "confirmed_fix": "Fix",
+                "verified_by": "user@example.com",
+            },
+        )
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == "Postmortem record is missing a title"
+
+
+def test_verify_postmortem_redis_error_on_get(client):
+    """PATCH /postmortems/{id}/verify should return 503 when Redis GET fails."""
+    mock_redis = MagicMock()
+    mock_redis.get.side_effect = RedisError("Connection timeout")
+
+    with patch("api.main._redis_client", mock_redis):
+        response = client.patch(
+            "/postmortems/test-id/verify",
+            json={
+                "confirmed_root_cause": "Root cause",
+                "confirmed_fix": "Fix",
+                "verified_by": "user@example.com",
+            },
+        )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Cache unavailable"
+
+
+def test_verify_postmortem_redis_error_on_set(client):
+    """PATCH /postmortems/{id}/verify should return 503 when Redis SET fails after verification."""
+    pm = {
+        "incident_id": "pm-redis-set-fail",
+        "title": "Service Outage",
+        "severity": "critical",
+        "affected_services": ["payment-service"],
+    }
+
+    mock_redis = MagicMock()
+    # GET succeeds
+    mock_redis.get.return_value = json.dumps(pm)
+    # SET fails
+    mock_redis.set.side_effect = RedisError("Write timeout")
+
+    mock_weaviate = MagicMock()
+    mock_collection = MagicMock()
+    mock_weaviate.collections.get.return_value = mock_collection
+
+    mock_genai_client = MagicMock()
+    mock_result = MagicMock()
+    mock_embedding = MagicMock()
+    mock_embedding.values = [0.2] * 768
+    mock_result.embeddings = [mock_embedding]
+    mock_genai_client.models.embed_content.return_value = mock_result
+
+    with patch("api.main._redis_client", mock_redis), \
+         patch("api.main._weaviate_client", mock_weaviate), \
+         patch("api.main.genai.Client", return_value=mock_genai_client), \
+         patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}):
+        response = client.patch(
+            "/postmortems/pm-redis-set-fail/verify",
+            json={
+                "confirmed_root_cause": "Payment gateway timeout",
+                "confirmed_fix": "Increased timeout and added circuit breaker",
+                "verified_by": "ops@example.com",
+            },
+        )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Cache unavailable"
+
+
+def test_verify_postmortem_weaviate_insert_fails(client):
+    """PATCH /postmortems/{id}/verify should return 503 when Weaviate insert fails."""
+    pm = {
+        "incident_id": "pm-weaviate-fail",
+        "title": "API Gateway Down",
+        "severity": "critical",
+        "affected_services": ["gateway"],
+    }
+
+    mock_redis = MagicMock()
+    mock_redis.get.return_value = json.dumps(pm)
+
+    mock_weaviate = MagicMock()
+    mock_collection = MagicMock()
+    mock_collection.data.insert.side_effect = Exception("Weaviate connection error")
+    mock_weaviate.collections.get.return_value = mock_collection
+
+    mock_genai_client = MagicMock()
+    mock_result = MagicMock()
+    mock_embedding = MagicMock()
+    mock_embedding.values = [0.3] * 768
+    mock_result.embeddings = [mock_embedding]
+    mock_genai_client.models.embed_content.return_value = mock_result
+
+    with patch("api.main._redis_client", mock_redis), \
+         patch("api.main._weaviate_client", mock_weaviate), \
+         patch("api.main.genai.Client", return_value=mock_genai_client), \
+         patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}):
+        response = client.patch(
+            "/postmortems/pm-weaviate-fail/verify",
+            json={
+                "confirmed_root_cause": "DDoS attack",
+                "confirmed_fix": "Rate limiting enabled",
+                "verified_by": "security@example.com",
+            },
+        )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Vector store unavailable"
+
+
+def test_verify_postmortem_empty_confirmed_root_cause(client):
+    """PATCH /postmortems/{id}/verify with empty confirmed_root_cause should return 422."""
+    response = client.patch(
+        "/postmortems/test-id/verify",
+        json={
+            "confirmed_root_cause": "",
+            "confirmed_fix": "Fix applied",
+            "verified_by": "user@example.com",
+        },
+    )
+
+    assert response.status_code == 422
+    assert "detail" in response.json()
+
+
+def test_verify_postmortem_whitespace_only_confirmed_root_cause(client):
+    """PATCH /postmortems/{id}/verify with whitespace-only confirmed_root_cause should return 422."""
+    response = client.patch(
+        "/postmortems/test-id/verify",
+        json={
+            "confirmed_root_cause": "   \n\t  ",
+            "confirmed_fix": "Fix applied",
+            "verified_by": "user@example.com",
+        },
+    )
+
+    assert response.status_code == 422
+    assert "detail" in response.json()
+
+
+def test_verify_postmortem_empty_confirmed_fix(client):
+    """PATCH /postmortems/{id}/verify with empty confirmed_fix should return 422."""
+    response = client.patch(
+        "/postmortems/test-id/verify",
+        json={
+            "confirmed_root_cause": "Root cause identified",
+            "confirmed_fix": "",
+            "verified_by": "user@example.com",
+        },
+    )
+
+    assert response.status_code == 422
+    assert "detail" in response.json()
+
+
+def test_verify_postmortem_whitespace_only_confirmed_fix(client):
+    """PATCH /postmortems/{id}/verify with whitespace-only confirmed_fix should return 422."""
+    response = client.patch(
+        "/postmortems/test-id/verify",
+        json={
+            "confirmed_root_cause": "Root cause identified",
+            "confirmed_fix": "  \t\n  ",
+            "verified_by": "user@example.com",
+        },
+    )
+
+    assert response.status_code == 422
+    assert "detail" in response.json()
+
+
+def test_startup_missing_gemini_api_key():
+    """startup() should raise RuntimeError when GEMINI_API_KEY is missing."""
+    with patch.dict("os.environ", {}, clear=True), \
+         patch("api.main.get_redis_client"), \
+         patch("api.main.get_client"), \
+         patch("api.main.get_producer"):
+        with pytest.raises(RuntimeError) as exc_info:
+            startup()
+        assert "GEMINI_API_KEY environment variable is required" in str(exc_info.value)
+
+
+def test_verify_postmortem_affected_services_string(client):
+    """PATCH /postmortems/{id}/verify should handle affected_services as string."""
+    pm = {
+        "incident_id": "pm-service-string",
+        "title": "Redis Cluster Failover",
+        "severity": "high",
+        "affected_services": "cache-service",  # string instead of list
+    }
+
+    mock_redis = MagicMock()
+    mock_redis.get.return_value = json.dumps(pm)
+    mock_redis.set.return_value = True
+
+    mock_weaviate = MagicMock()
+    mock_collection = MagicMock()
+    mock_weaviate.collections.get.return_value = mock_collection
+
+    mock_genai_client = MagicMock()
+    mock_result = MagicMock()
+    mock_embedding = MagicMock()
+    mock_embedding.values = [0.4] * 768
+    mock_result.embeddings = [mock_embedding]
+    mock_genai_client.models.embed_content.return_value = mock_result
+
+    with patch("api.main._redis_client", mock_redis), \
+         patch("api.main._weaviate_client", mock_weaviate), \
+         patch("api.main.genai.Client", return_value=mock_genai_client), \
+         patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}):
+        response = client.patch(
+            "/postmortems/pm-service-string/verify",
+            json={
+                "confirmed_root_cause": "Leader election failure",
+                "confirmed_fix": "Restarted cluster with quorum",
+                "verified_by": "sre@example.com",
+            },
+        )
+
+    assert response.status_code == 200
+    insert_args = mock_collection.data.insert.call_args
+    assert insert_args[1]["properties"]["service"] == "cache-service"
+
+
+def test_verify_postmortem_affected_services_empty_list(client):
+    """PATCH /postmortems/{id}/verify should handle empty affected_services list."""
+    pm = {
+        "incident_id": "pm-service-empty",
+        "title": "Network Latency Spike",
+        "severity": "medium",
+        "affected_services": [],
+    }
+
+    mock_redis = MagicMock()
+    mock_redis.get.return_value = json.dumps(pm)
+    mock_redis.set.return_value = True
+
+    mock_weaviate = MagicMock()
+    mock_collection = MagicMock()
+    mock_weaviate.collections.get.return_value = mock_collection
+
+    mock_genai_client = MagicMock()
+    mock_result = MagicMock()
+    mock_embedding = MagicMock()
+    mock_embedding.values = [0.5] * 768
+    mock_result.embeddings = [mock_embedding]
+    mock_genai_client.models.embed_content.return_value = mock_result
+
+    with patch("api.main._redis_client", mock_redis), \
+         patch("api.main._weaviate_client", mock_weaviate), \
+         patch("api.main.genai.Client", return_value=mock_genai_client), \
+         patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}):
+        response = client.patch(
+            "/postmortems/pm-service-empty/verify",
+            json={
+                "confirmed_root_cause": "ISP routing issue",
+                "confirmed_fix": "Contacted ISP, issue resolved",
+                "verified_by": "netops@example.com",
+            },
+        )
+
+    assert response.status_code == 200
+    insert_args = mock_collection.data.insert.call_args
+    assert insert_args[1]["properties"]["service"] == "unknown"
+
+
+def test_verify_postmortem_affected_services_missing(client):
+    """PATCH /postmortems/{id}/verify should handle missing affected_services field."""
+    pm = {
+        "incident_id": "pm-service-missing",
+        "title": "Disk Space Full",
+        "severity": "critical",
+        # affected_services field is missing
+    }
+
+    mock_redis = MagicMock()
+    mock_redis.get.return_value = json.dumps(pm)
+    mock_redis.set.return_value = True
+
+    mock_weaviate = MagicMock()
+    mock_collection = MagicMock()
+    mock_weaviate.collections.get.return_value = mock_collection
+
+    mock_genai_client = MagicMock()
+    mock_result = MagicMock()
+    mock_embedding = MagicMock()
+    mock_embedding.values = [0.6] * 768
+    mock_result.embeddings = [mock_embedding]
+    mock_genai_client.models.embed_content.return_value = mock_result
+
+    with patch("api.main._redis_client", mock_redis), \
+         patch("api.main._weaviate_client", mock_weaviate), \
+         patch("api.main.genai.Client", return_value=mock_genai_client), \
+         patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}):
+        response = client.patch(
+            "/postmortems/pm-service-missing/verify",
+            json={
+                "confirmed_root_cause": "Log rotation disabled",
+                "confirmed_fix": "Enabled log rotation and cleared old logs",
+                "verified_by": "sysadmin@example.com",
+            },
+        )
+
+    assert response.status_code == 200
+    insert_args = mock_collection.data.insert.call_args
+    assert insert_args[1]["properties"]["service"] == "unknown"
