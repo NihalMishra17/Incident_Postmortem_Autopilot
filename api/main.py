@@ -1,4 +1,5 @@
 """FastAPI service for triggering incident analysis and retrieving postmortems."""
+import logging_config
 import json
 import logging
 import os
@@ -14,15 +15,18 @@ import threading
 from google import genai
 from google.genai.errors import ClientError
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
+from prometheus_fastapi_instrumentator import Instrumentator
 
 from infra.kafka_client import get_consumer, get_producer, produce_json
 from infra.redis_client import get_redis_client
 from infra.weaviate_client import get_client
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Incident Postmortem API")
+
+instrumentator = Instrumentator(excluded_handlers=["/metrics"])
+instrumentator.instrument(app)
 
 origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",") if o.strip()]
 app.add_middleware(
@@ -266,3 +270,6 @@ def verify_postmortem(incident_id: str, req: VerifyRequest):
         raise HTTPException(status_code=503, detail="Cache unavailable")
 
     return postmortem
+
+# Expose Prometheus metrics endpoint; must be called after all route definitions to capture all handlers
+instrumentator.expose(app, endpoint="/metrics")

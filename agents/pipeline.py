@@ -2,6 +2,7 @@
 
 Run as: python -m agents.pipeline
 """
+import logging_config
 import json
 import logging
 import os
@@ -13,7 +14,6 @@ from agents.correlation_agent import CorrelationAgent
 from agents.rca_agent import RCAAgent
 from agents.postmortem_writer import PostmortemWriter
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
 shutdown_event = threading.Event()

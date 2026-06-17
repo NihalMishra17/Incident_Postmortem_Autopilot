@@ -246,6 +246,12 @@ REDIS_TTL=86400
 CORS_ORIGINS=http://localhost:3000
 ```
 
+## Observability
+
+**Structured Logging** — All application logs (agents and API) emit JSON to stdout via structlog, enabling container aggregation and log searching.
+
+**Prometheus Metrics** — The FastAPI service exposes request latency, throughput, and error rates at `GET /metrics` (Prometheus-compatible format). In production, restrict `/metrics` to internal networks via a reverse proxy or network policies.
+
 ## Known Limitations
 
 - **Single-instance pipeline** — The agent pipeline runs on one process. For horizontal scaling, use Kafka consumer groups.
