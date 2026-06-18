@@ -136,8 +136,8 @@ def test_embed_text_uses_correct_model_and_content():
     test_text = "Payment service DB connection pool exhaustion"
     result = _embed_text(mock_genai_client, test_text)
 
-    # Verify correct parameters passed
+    # Verify correct parameters passed (updated to gemini-embedding-001)
     mock_genai_client.models.embed_content.assert_called_once_with(
-        model="models/text-embedding-004", contents=test_text
+        model="models/gemini-embedding-001", contents=test_text
     )
     assert len(result) == 768

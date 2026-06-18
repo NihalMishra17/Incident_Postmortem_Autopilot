@@ -10,7 +10,7 @@ from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from redis.exceptions import RedisError
 import threading
 from google import genai
@@ -93,18 +93,54 @@ class TriggerRequest(BaseModel):
         return v
 
 class VerifyRequest(BaseModel):
-    """Request payload for verifying postmortem root cause and fix."""
+    """Request payload for verifying postmortem root cause and engineer-selected fix.
+
+    Accepts human-verified root cause and one of three mutually-exclusive fix selection modes:
+    - `selected_fix_index` (0, 1, or 2): Use one of the AI-ranked fix suggestions from postmortem.
+    - `custom_fix`: Supply a custom fix not in the ranked suggestions.
+    - `confirmed_fix` (deprecated): Legacy alias for `custom_fix`; treated as custom source.
+
+    Exactly one fix field must be provided.
+    """
     confirmed_root_cause: str = Field(..., min_length=1, max_length=4096)
-    confirmed_fix: str = Field(..., min_length=1, max_length=4096)
+    confirmed_fix: Optional[str] = Field(None, min_length=1, max_length=4096)
+    selected_fix_index: Optional[int] = None
+    custom_fix: Optional[str] = Field(None, min_length=1, max_length=4096)
     verified_by: str = Field(..., min_length=1, max_length=128)
 
-    @field_validator("confirmed_root_cause", "confirmed_fix")
+    @field_validator("confirmed_root_cause")
     @classmethod
-    def strip_and_validate(cls, v):
+    def strip_and_validate_root_cause(cls, v):
         stripped = v.strip()
         if not stripped:
             raise ValueError("Field cannot be empty after stripping whitespace")
         return stripped
+
+    @field_validator("confirmed_fix", "custom_fix")
+    @classmethod
+    def strip_and_validate_fix_fields(cls, v):
+        if v is None:
+            return v
+        stripped = v.strip()
+        if not stripped:
+            raise ValueError("Field cannot be empty after stripping whitespace")
+        return stripped
+
+    @model_validator(mode='after')
+    def validate_fix_fields(self):
+        """Validate that exactly one of confirmed_fix, selected_fix_index, custom_fix is provided."""
+        fix_fields = [
+            self.confirmed_fix is not None,
+            self.selected_fix_index is not None,
+            self.custom_fix is not None
+        ]
+        if sum(fix_fields) == 0:
+            raise ValueError("Must provide one of: confirmed_fix, selected_fix_index, or custom_fix")
+        if sum(fix_fields) > 1:
+            raise ValueError("Cannot provide multiple fix fields; choose one of: confirmed_fix, selected_fix_index, or custom_fix")
+        if self.selected_fix_index is not None and self.selected_fix_index not in {0, 1, 2}:
+            raise ValueError("selected_fix_index must be 0, 1, or 2")
+        return self
 
 def _consume_postmortems():
     """Consume postmortems from Kafka 'postmortems' topic, store JSON in Redis with TTL, and maintain postmortem:index set."""
@@ -173,25 +209,26 @@ def trigger_postmortem(req: TriggerRequest):
     retry=retry_if_exception(lambda e: isinstance(e, ClientError) and e.code == 429),
     reraise=True,
 )
-def _embed_and_upsert_to_weaviate(postmortem: dict, confirmed_root_cause: str, confirmed_fix: str) -> None:
-    """Embed postmortem with verified root cause and fix, then insert into Weaviate for future correlation.
+def _embed_and_upsert_to_weaviate(postmortem: dict, confirmed_root_cause: str, final_fix: str) -> None:
+    """Embed engineer-verified postmortem and persist to Weaviate for future incident correlation.
 
-    Combines the postmortem title with the confirmed root cause and fix, generates a vector embedding
-    via Gemini `gemini-embedding-001`, and upserts a new entry into the Weaviate `PastIncident`
-    collection. This is the only code path that writes verified incidents to Weaviate; AI-generated
-    postmortems are never persisted to Weaviate until a human verifies them.
+    Combines the postmortem title, confirmed root cause, and selected fix into a single text,
+    generates a vector embedding via Gemini `gemini-embedding-001`, and inserts a new entry
+    into the Weaviate `PastIncident` collection. This is the only code path that writes verified
+    incidents to Weaviate; AI-generated postmortems are never persisted until explicitly verified
+    by an engineer. Verified incidents become the training data for ranking future fix suggestions.
 
     Args:
         postmortem: Dict containing the AI-generated postmortem with keys 'title' (required) and
             'affected_services' (optional list or string).
         confirmed_root_cause: Engineer-verified root cause (non-blank, max 4096 chars).
-        confirmed_fix: Engineer-verified fix description (non-blank, max 4096 chars).
+        final_fix: Engineer-verified or AI-ranked fix description (non-blank, max 4096 chars).
 
     Raises:
         HTTPException: 503 if embedding generation fails or Weaviate insert fails.
     """
     title = postmortem["title"]
-    text = f"{title}. {confirmed_root_cause}. {confirmed_fix}"
+    text = f"{title}. {confirmed_root_cause}. {final_fix}"
 
     api_key = os.getenv("GEMINI_API_KEY")
     genai_client = genai.Client(api_key=api_key)
@@ -216,7 +253,7 @@ def _embed_and_upsert_to_weaviate(postmortem: dict, confirmed_root_cause: str, c
             properties={
                 "title": title,
                 "root_cause": confirmed_root_cause,
-                "fix": confirmed_fix,
+                "fix": final_fix,
                 "service": service_str,
             },
             vector=vector
@@ -263,13 +300,33 @@ def verify_postmortem(incident_id: str, req: VerifyRequest):
     if not postmortem.get("title"):
         raise HTTPException(status_code=500, detail="Postmortem record is missing a title")
 
-    _embed_and_upsert_to_weaviate(postmortem, req.confirmed_root_cause, req.confirmed_fix)
+    if not postmortem.get("suggested_fixes") or not isinstance(postmortem["suggested_fixes"], list) or len(postmortem["suggested_fixes"]) == 0:
+        raise HTTPException(status_code=400, detail="Postmortem predates fix suggestions; re-trigger via /postmortems/trigger to regenerate.")
+
+    # Resolve final fix from request: either one of the AI-ranked suggestions ("ranked")
+    # or a custom/legacy fix provided by the engineer ("custom")
+    if req.selected_fix_index is not None:
+        if req.selected_fix_index >= len(postmortem["suggested_fixes"]):
+            raise HTTPException(status_code=400, detail=f"selected_fix_index {req.selected_fix_index} out of bounds; postmortem has {len(postmortem['suggested_fixes'])} suggested fixes.")
+        final_fix = postmortem["suggested_fixes"][req.selected_fix_index]["fix"]
+        final_fix_source = "ranked"
+    elif req.custom_fix is not None:
+        final_fix = req.custom_fix
+        final_fix_source = "custom"
+    else:  # confirmed_fix (deprecated alias)
+        final_fix = req.confirmed_fix
+        final_fix_source = "custom"
+
+    _embed_and_upsert_to_weaviate(postmortem, req.confirmed_root_cause, final_fix)
 
     postmortem["verified"] = True
     postmortem["verified_by"] = req.verified_by
     postmortem["verified_at"] = datetime.now(timezone.utc).isoformat()
     postmortem["confirmed_root_cause"] = req.confirmed_root_cause
-    postmortem["confirmed_fix"] = req.confirmed_fix
+    postmortem["final_fix"] = final_fix
+    postmortem["final_fix_source"] = final_fix_source
+    if req.confirmed_fix is not None:
+        postmortem["confirmed_fix"] = req.confirmed_fix
 
     try:
         ttl = int(os.getenv("REDIS_TTL", "86400"))

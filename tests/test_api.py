@@ -6,6 +6,13 @@ from redis.exceptions import RedisError
 from api.main import app
 
 
+MOCK_SUGGESTED_FIXES = [
+    {"fix": "Restart the affected service", "confidence": 0.95, "reasoning": "Similar to: payments-outage-2024 — connection pool exhausted"},
+    {"fix": "Scale up replica count", "confidence": 0.82, "reasoning": "Similar to: auth-latency-2024 — pod OOM killed"},
+    {"fix": "Roll back last deployment", "confidence": 0.71, "reasoning": "Similar to: api-gateway-500s — bad config pushed"},
+]
+
+
 @pytest.fixture
 def client():
     """Create FastAPI test client."""
@@ -186,6 +193,7 @@ def test_verify_postmortem_happy_path(client):
         "title": "Database Connection Pool Exhausted",
         "severity": "critical",
         "affected_services": ["auth-service", "user-service"],
+        "suggested_fixes": MOCK_SUGGESTED_FIXES,
     }
 
     mock_redis = MagicMock()
@@ -225,6 +233,8 @@ def test_verify_postmortem_happy_path(client):
     assert "verified_at" in data
     assert data["confirmed_root_cause"] == "Max connections reached due to connection leak"
     assert data["confirmed_fix"] == "Patched connection cleanup in ORM layer"
+    assert data["final_fix"] == "Patched connection cleanup in ORM layer"
+    assert data["final_fix_source"] == "custom"
     assert data["incident_id"] == "pm-verify-1"
     assert data["title"] == "Database Connection Pool Exhausted"
 
@@ -376,6 +386,7 @@ def test_verify_postmortem_redis_error_on_set(client):
         "title": "Service Outage",
         "severity": "critical",
         "affected_services": ["payment-service"],
+        "suggested_fixes": MOCK_SUGGESTED_FIXES,
     }
 
     mock_redis = MagicMock()
@@ -419,6 +430,7 @@ def test_verify_postmortem_weaviate_insert_fails(client):
         "title": "API Gateway Down",
         "severity": "critical",
         "affected_services": ["gateway"],
+        "suggested_fixes": MOCK_SUGGESTED_FIXES,
     }
 
     mock_redis = MagicMock()
@@ -533,6 +545,7 @@ def test_verify_postmortem_affected_services_string(client):
         "title": "Redis Cluster Failover",
         "severity": "high",
         "affected_services": "cache-service",  # string instead of list
+        "suggested_fixes": MOCK_SUGGESTED_FIXES,
     }
 
     mock_redis = MagicMock()
@@ -575,6 +588,7 @@ def test_verify_postmortem_affected_services_empty_list(client):
         "title": "Network Latency Spike",
         "severity": "medium",
         "affected_services": [],
+        "suggested_fixes": MOCK_SUGGESTED_FIXES,
     }
 
     mock_redis = MagicMock()
@@ -617,6 +631,7 @@ def test_verify_postmortem_affected_services_missing(client):
         "title": "Disk Space Full",
         "severity": "critical",
         # affected_services field is missing
+        "suggested_fixes": MOCK_SUGGESTED_FIXES,
     }
 
     mock_redis = MagicMock()
@@ -650,6 +665,381 @@ def test_verify_postmortem_affected_services_missing(client):
     assert response.status_code == 200
     insert_args = mock_collection.data.insert.call_args
     assert insert_args[1]["properties"]["service"] == "unknown"
+
+
+# ============================
+# Verify with ranked/custom fix tests
+# ============================
+
+
+def test_verify_postmortem_selected_fix_index_0(client):
+    """PATCH /postmortems/{id}/verify with selected_fix_index=0 should use first ranked fix."""
+    pm = {
+        "incident_id": "pm-ranked-0",
+        "title": "Connection Pool Exhausted",
+        "severity": "critical",
+        "affected_services": ["payments"],
+        "suggested_fixes": MOCK_SUGGESTED_FIXES,
+    }
+
+    mock_redis = MagicMock()
+    mock_redis.get.return_value = json.dumps(pm)
+    mock_redis.set.return_value = True
+
+    mock_weaviate = MagicMock()
+    mock_collection = MagicMock()
+    mock_weaviate.collections.get.return_value = mock_collection
+
+    mock_genai_client = MagicMock()
+    mock_result = MagicMock()
+    mock_embedding = MagicMock()
+    mock_embedding.values = [0.7] * 768
+    mock_result.embeddings = [mock_embedding]
+    mock_genai_client.models.embed_content.return_value = mock_result
+
+    with patch("api.main._redis_client", mock_redis), \
+         patch("api.main._weaviate_client", mock_weaviate), \
+         patch("api.main.genai.Client", return_value=mock_genai_client), \
+         patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}):
+        response = client.patch(
+            "/postmortems/pm-ranked-0/verify",
+            json={
+                "confirmed_root_cause": "Pool size too small",
+                "selected_fix_index": 0,
+                "verified_by": "sre@example.com",
+            },
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["final_fix"] == "Restart the affected service"
+    assert data["final_fix_source"] == "ranked"
+    assert "confirmed_fix" not in data
+
+
+def test_verify_postmortem_selected_fix_index_2(client):
+    """PATCH /postmortems/{id}/verify with selected_fix_index=2 should use third ranked fix."""
+    pm = {
+        "incident_id": "pm-ranked-2",
+        "title": "Bad Config Pushed",
+        "severity": "high",
+        "affected_services": ["api-gateway"],
+        "suggested_fixes": MOCK_SUGGESTED_FIXES,
+    }
+
+    mock_redis = MagicMock()
+    mock_redis.get.return_value = json.dumps(pm)
+    mock_redis.set.return_value = True
+
+    mock_weaviate = MagicMock()
+    mock_collection = MagicMock()
+    mock_weaviate.collections.get.return_value = mock_collection
+
+    mock_genai_client = MagicMock()
+    mock_result = MagicMock()
+    mock_embedding = MagicMock()
+    mock_embedding.values = [0.8] * 768
+    mock_result.embeddings = [mock_embedding]
+    mock_genai_client.models.embed_content.return_value = mock_result
+
+    with patch("api.main._redis_client", mock_redis), \
+         patch("api.main._weaviate_client", mock_weaviate), \
+         patch("api.main.genai.Client", return_value=mock_genai_client), \
+         patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}):
+        response = client.patch(
+            "/postmortems/pm-ranked-2/verify",
+            json={
+                "confirmed_root_cause": "Invalid config value",
+                "selected_fix_index": 2,
+                "verified_by": "ops@example.com",
+            },
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["final_fix"] == "Roll back last deployment"
+    assert data["final_fix_source"] == "ranked"
+
+
+def test_verify_postmortem_custom_fix(client):
+    """PATCH /postmortems/{id}/verify with custom_fix should use the custom fix text."""
+    pm = {
+        "incident_id": "pm-custom",
+        "title": "Custom Fix Scenario",
+        "severity": "medium",
+        "affected_services": ["custom-service"],
+        "suggested_fixes": MOCK_SUGGESTED_FIXES,
+    }
+
+    mock_redis = MagicMock()
+    mock_redis.get.return_value = json.dumps(pm)
+    mock_redis.set.return_value = True
+
+    mock_weaviate = MagicMock()
+    mock_collection = MagicMock()
+    mock_weaviate.collections.get.return_value = mock_collection
+
+    mock_genai_client = MagicMock()
+    mock_result = MagicMock()
+    mock_embedding = MagicMock()
+    mock_embedding.values = [0.9] * 768
+    mock_result.embeddings = [mock_embedding]
+    mock_genai_client.models.embed_content.return_value = mock_result
+
+    with patch("api.main._redis_client", mock_redis), \
+         patch("api.main._weaviate_client", mock_weaviate), \
+         patch("api.main.genai.Client", return_value=mock_genai_client), \
+         patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}):
+        response = client.patch(
+            "/postmortems/pm-custom/verify",
+            json={
+                "confirmed_root_cause": "Root cause analysis",
+                "custom_fix": "My custom fix",
+                "verified_by": "user@example.com",
+            },
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["final_fix"] == "My custom fix"
+    assert data["final_fix_source"] == "custom"
+
+
+def test_verify_postmortem_confirmed_fix_alias(client):
+    """PATCH /postmortems/{id}/verify with confirmed_fix (legacy) should use custom fix source."""
+    pm = {
+        "incident_id": "pm-legacy",
+        "title": "Legacy Fix Field",
+        "severity": "low",
+        "affected_services": ["legacy"],
+        "suggested_fixes": MOCK_SUGGESTED_FIXES,
+    }
+
+    mock_redis = MagicMock()
+    mock_redis.get.return_value = json.dumps(pm)
+    mock_redis.set.return_value = True
+
+    mock_weaviate = MagicMock()
+    mock_collection = MagicMock()
+    mock_weaviate.collections.get.return_value = mock_collection
+
+    mock_genai_client = MagicMock()
+    mock_result = MagicMock()
+    mock_embedding = MagicMock()
+    mock_embedding.values = [0.11] * 768
+    mock_result.embeddings = [mock_embedding]
+    mock_genai_client.models.embed_content.return_value = mock_result
+
+    with patch("api.main._redis_client", mock_redis), \
+         patch("api.main._weaviate_client", mock_weaviate), \
+         patch("api.main.genai.Client", return_value=mock_genai_client), \
+         patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}):
+        response = client.patch(
+            "/postmortems/pm-legacy/verify",
+            json={
+                "confirmed_root_cause": "Legacy root cause",
+                "confirmed_fix": "Legacy fix text",
+                "verified_by": "legacy@example.com",
+            },
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["final_fix"] == "Legacy fix text"
+    assert data["final_fix_source"] == "custom"
+    assert data["confirmed_fix"] == "Legacy fix text"
+
+
+def test_verify_postmortem_both_index_and_custom(client):
+    """PATCH /postmortems/{id}/verify with both selected_fix_index and custom_fix should return 422."""
+    response = client.patch(
+        "/postmortems/test-id/verify",
+        json={
+            "confirmed_root_cause": "Root cause",
+            "selected_fix_index": 0,
+            "custom_fix": "Custom fix",
+            "verified_by": "user@example.com",
+        },
+    )
+
+    assert response.status_code == 422
+    assert "detail" in response.json()
+
+
+def test_verify_postmortem_no_fix_field(client):
+    """PATCH /postmortems/{id}/verify with no fix field should return 422."""
+    response = client.patch(
+        "/postmortems/test-id/verify",
+        json={
+            "confirmed_root_cause": "Root cause only",
+            "verified_by": "user@example.com",
+        },
+    )
+
+    assert response.status_code == 422
+    assert "detail" in response.json()
+
+
+def test_verify_postmortem_invalid_fix_index_negative(client):
+    """PATCH /postmortems/{id}/verify with negative selected_fix_index should return 422."""
+    response = client.patch(
+        "/postmortems/test-id/verify",
+        json={
+            "confirmed_root_cause": "Root cause",
+            "selected_fix_index": -1,
+            "verified_by": "user@example.com",
+        },
+    )
+
+    assert response.status_code == 422
+    assert "detail" in response.json()
+
+
+def test_verify_postmortem_invalid_fix_index_too_large(client):
+    """PATCH /postmortems/{id}/verify with selected_fix_index=3 should return 422."""
+    response = client.patch(
+        "/postmortems/test-id/verify",
+        json={
+            "confirmed_root_cause": "Root cause",
+            "selected_fix_index": 3,
+            "verified_by": "user@example.com",
+        },
+    )
+
+    assert response.status_code == 422
+    assert "detail" in response.json()
+
+
+def test_verify_postmortem_index_out_of_bounds_runtime(client):
+    """PATCH /postmortems/{id}/verify with selected_fix_index out of bounds at runtime should return 400."""
+    pm = {
+        "incident_id": "pm-short-fixes",
+        "title": "Short Fixes List",
+        "severity": "medium",
+        "affected_services": ["test"],
+        "suggested_fixes": [MOCK_SUGGESTED_FIXES[0]],  # Only 1 fix
+    }
+
+    mock_redis = MagicMock()
+    mock_redis.get.return_value = json.dumps(pm)
+
+    with patch("api.main._redis_client", mock_redis):
+        response = client.patch(
+            "/postmortems/pm-short-fixes/verify",
+            json={
+                "confirmed_root_cause": "Root cause",
+                "selected_fix_index": 2,
+                "verified_by": "user@example.com",
+            },
+        )
+
+    assert response.status_code == 400
+    assert "out of bounds" in response.json()["detail"]
+
+
+def test_verify_postmortem_missing_suggested_fixes(client):
+    """PATCH /postmortems/{id}/verify on postmortem without suggested_fixes should return 400."""
+    pm = {
+        "incident_id": "pm-old-format",
+        "title": "Old Format Postmortem",
+        "severity": "high",
+        "affected_services": ["old"],
+        # No suggested_fixes field
+    }
+
+    mock_redis = MagicMock()
+    mock_redis.get.return_value = json.dumps(pm)
+
+    with patch("api.main._redis_client", mock_redis):
+        response = client.patch(
+            "/postmortems/pm-old-format/verify",
+            json={
+                "confirmed_root_cause": "Root cause",
+                "selected_fix_index": 0,
+                "verified_by": "user@example.com",
+            },
+        )
+
+    assert response.status_code == 400
+    assert "predates" in response.json()["detail"]
+
+
+def test_verify_postmortem_empty_suggested_fixes(client):
+    """PATCH /postmortems/{id}/verify on postmortem with empty suggested_fixes should return 400."""
+    pm = {
+        "incident_id": "pm-empty-fixes",
+        "title": "Empty Fixes Postmortem",
+        "severity": "medium",
+        "affected_services": ["test"],
+        "suggested_fixes": [],
+    }
+
+    mock_redis = MagicMock()
+    mock_redis.get.return_value = json.dumps(pm)
+
+    with patch("api.main._redis_client", mock_redis):
+        response = client.patch(
+            "/postmortems/pm-empty-fixes/verify",
+            json={
+                "confirmed_root_cause": "Root cause",
+                "selected_fix_index": 0,
+                "verified_by": "user@example.com",
+            },
+        )
+
+    assert response.status_code == 400
+    assert "predates" in response.json()["detail"]
+
+
+def test_verify_weaviate_upsert_uses_final_fix(client):
+    """PATCH /postmortems/{id}/verify with selected_fix_index=1 should pass correct fix to Weaviate."""
+    pm = {
+        "incident_id": "pm-weaviate-check",
+        "title": "Weaviate Fix Check",
+        "severity": "critical",
+        "affected_services": ["auth"],
+        "suggested_fixes": MOCK_SUGGESTED_FIXES,
+    }
+
+    mock_redis = MagicMock()
+    mock_redis.get.return_value = json.dumps(pm)
+    mock_redis.set.return_value = True
+
+    mock_weaviate = MagicMock()
+    mock_collection = MagicMock()
+    mock_weaviate.collections.get.return_value = mock_collection
+
+    mock_genai_client = MagicMock()
+    mock_result = MagicMock()
+    mock_embedding = MagicMock()
+    mock_embedding.values = [0.12] * 768
+    mock_result.embeddings = [mock_embedding]
+    mock_genai_client.models.embed_content.return_value = mock_result
+
+    with patch("api.main._redis_client", mock_redis), \
+         patch("api.main._weaviate_client", mock_weaviate), \
+         patch("api.main.genai.Client", return_value=mock_genai_client), \
+         patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}):
+        response = client.patch(
+            "/postmortems/pm-weaviate-check/verify",
+            json={
+                "confirmed_root_cause": "OOM",
+                "selected_fix_index": 1,
+                "verified_by": "sre@example.com",
+            },
+        )
+
+    assert response.status_code == 200
+
+    # Verify Weaviate was called with the correct fix
+    mock_collection.data.insert.assert_called_once()
+    insert_args = mock_collection.data.insert.call_args
+    assert insert_args[1]["properties"]["fix"] == "Scale up replica count"
+
+    # Also verify the embedding text contains the fix
+    embed_call_args = mock_genai_client.models.embed_content.call_args
+    embedded_text = embed_call_args[1]["contents"]
+    assert "Scale up replica count" in embedded_text
 
 
 # ============================

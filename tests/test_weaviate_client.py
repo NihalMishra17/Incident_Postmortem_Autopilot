@@ -57,16 +57,16 @@ class TestInitSchema:
         call_args = mock_weaviate_client.collections.create.call_args
         assert call_args[1]['name'] == "PastIncident"
 
-        # Verify properties
+        # Verify properties (embedding removed, vectorizer_config=none)
         properties = call_args[1]['properties']
-        assert len(properties) == 5
+        assert len(properties) == 4
 
         property_names = [prop.name for prop in properties]
         assert 'title' in property_names
         assert 'root_cause' in property_names
         assert 'fix' in property_names
         assert 'service' in property_names
-        assert 'embedding' in property_names
+        assert 'embedding' not in property_names
 
         mock_print.assert_called_with("PastIncident collection created")
 
@@ -109,7 +109,7 @@ class TestInitSchema:
         assert prop_map['root_cause'] == DataType.TEXT
         assert prop_map['fix'] == DataType.TEXT
         assert prop_map['service'] == DataType.TEXT
-        assert prop_map['embedding'] == DataType.NUMBER_ARRAY
+        # embedding property removed
 
     def test_init_schema_all_required_properties_present(self, mock_weaviate_client):
         """Test that all required properties for PastIncident are created."""
@@ -121,7 +121,8 @@ class TestInitSchema:
         properties = call_args[1]['properties']
         property_names = {prop.name for prop in properties}
 
-        required_properties = {'title', 'root_cause', 'fix', 'service', 'embedding'}
+        # embedding removed from schema (vectorizer_config=none, vectors passed at insert time)
+        required_properties = {'title', 'root_cause', 'fix', 'service'}
         assert property_names == required_properties
 
 
