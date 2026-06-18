@@ -3,7 +3,7 @@ import json
 from fastapi.testclient import TestClient
 from unittest.mock import MagicMock, patch, call
 from redis.exceptions import RedisError
-from api.main import app, startup
+from api.main import app
 
 
 @pytest.fixture
@@ -514,13 +514,15 @@ def test_verify_postmortem_whitespace_only_confirmed_fix(client):
 
 
 def test_startup_missing_gemini_api_key():
-    """startup() should raise RuntimeError when GEMINI_API_KEY is missing."""
+    """_do_startup() should raise RuntimeError when GEMINI_API_KEY is missing."""
+    from api.main import _do_startup
+
     with patch.dict("os.environ", {}, clear=True), \
          patch("api.main.get_redis_client"), \
          patch("api.main.get_client"), \
          patch("api.main.get_producer"):
         with pytest.raises(RuntimeError) as exc_info:
-            startup()
+            _do_startup()
         assert "GEMINI_API_KEY environment variable is required" in str(exc_info.value)
 
 
@@ -648,3 +650,106 @@ def test_verify_postmortem_affected_services_missing(client):
     assert response.status_code == 200
     insert_args = mock_collection.data.insert.call_args
     assert insert_args[1]["properties"]["service"] == "unknown"
+
+
+# ============================
+# Lifespan and shutdown tests
+# ============================
+
+
+def test_do_shutdown_consumer_thread_timeout():
+    """_do_shutdown() should log warning when consumer thread doesn't stop within timeout."""
+    from api.main import _do_shutdown, _stop_event
+    import logging
+
+    # Create a mock consumer thread that won't stop within timeout
+    mock_thread = MagicMock()
+    mock_thread.is_alive.return_value = True
+    mock_thread.join = MagicMock()
+
+    mock_producer = MagicMock()
+    mock_weaviate = MagicMock()
+    mock_redis = MagicMock()
+
+    with patch("api.main._consumer_thread", mock_thread), \
+         patch("api.main._producer", mock_producer), \
+         patch("api.main._weaviate_client", mock_weaviate), \
+         patch("api.main._redis_client", mock_redis), \
+         patch("api.main.logger") as mock_logger:
+        
+        _do_shutdown()
+        
+        # Verify stop event was set
+        assert _stop_event.is_set()
+        
+        # Verify thread.join was called with timeout
+        mock_thread.join.assert_called_once_with(timeout=5)
+        
+        # Verify warning was logged for thread that didn't terminate
+        mock_logger.warning.assert_called_once_with("Consumer thread did not terminate within timeout")
+        
+        # Verify cleanup still happened for other resources
+        mock_producer.flush.assert_called_once()
+        mock_weaviate.close.assert_called_once()
+        mock_redis.close.assert_called_once()
+
+
+def test_do_shutdown_consumer_thread_stops_successfully():
+    """_do_shutdown() should not log warning when consumer thread stops successfully."""
+    from api.main import _do_shutdown, _stop_event
+    
+    # Create a mock consumer thread that stops successfully
+    mock_thread = MagicMock()
+    mock_thread.is_alive.return_value = False
+    mock_thread.join = MagicMock()
+
+    mock_producer = MagicMock()
+    mock_weaviate = MagicMock()
+    mock_redis = MagicMock()
+
+    with patch("api.main._consumer_thread", mock_thread), \
+         patch("api.main._producer", mock_producer), \
+         patch("api.main._weaviate_client", mock_weaviate), \
+         patch("api.main._redis_client", mock_redis), \
+         patch("api.main.logger") as mock_logger:
+        
+        _do_shutdown()
+        
+        # Verify stop event was set
+        assert _stop_event.is_set()
+        
+        # Verify thread.join was called with timeout
+        mock_thread.join.assert_called_once_with(timeout=5)
+        
+        # Verify NO warning was logged (thread stopped successfully)
+        mock_logger.warning.assert_not_called()
+        
+        # Verify cleanup still happened for other resources
+        mock_producer.flush.assert_called_once()
+        mock_weaviate.close.assert_called_once()
+        mock_redis.close.assert_called_once()
+
+
+def test_lifespan_context_manager():
+    """lifespan context manager should call _do_startup on enter and _do_shutdown on exit."""
+    from api.main import lifespan
+    import asyncio
+    
+    async def run_lifespan():
+        mock_app = MagicMock()
+        
+        with patch("api.main._do_startup") as mock_startup, \
+             patch("api.main._do_shutdown") as mock_shutdown:
+            
+            # Enter the context manager
+            async with lifespan(mock_app):
+                # Verify startup was called
+                mock_startup.assert_called_once()
+                # Verify shutdown has not been called yet
+                mock_shutdown.assert_not_called()
+            
+            # After exiting context, verify shutdown was called
+            mock_shutdown.assert_called_once()
+    
+    # Run the async test
+    asyncio.run(run_lifespan())

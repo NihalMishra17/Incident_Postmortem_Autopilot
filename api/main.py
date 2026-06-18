@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -23,7 +24,48 @@ from infra.weaviate_client import get_client
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Incident Postmortem API")
+_redis_client = None
+_consumer_thread: Optional[threading.Thread] = None
+_stop_event = threading.Event()
+_producer = None
+_weaviate_client = None
+
+def _do_startup():
+    """Initialize Redis, Kafka producer, Weaviate client, and start the postmortem consumer thread."""
+    global _consumer_thread, _producer, _redis_client, _weaviate_client
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        logger.error("Error: GEMINI_API_KEY environment variable is required")
+        raise RuntimeError("GEMINI_API_KEY environment variable is required")
+    _redis_client = get_redis_client()
+    _redis_client.ping()  # fail fast if Redis is unreachable
+    _weaviate_client = get_client()
+    _producer = get_producer()
+    _consumer_thread = threading.Thread(target=_consume_postmortems, daemon=True)
+    _consumer_thread.start()
+
+def _do_shutdown():
+    """Shutdown Kafka consumer, producer, Weaviate client, and Redis client."""
+    _stop_event.set()
+    if _consumer_thread:
+        _consumer_thread.join(timeout=5)
+        if _consumer_thread.is_alive():
+            logger.warning("Consumer thread did not terminate within timeout")
+    if _producer:
+        _producer.flush()
+    if _weaviate_client:
+        _weaviate_client.close()
+    if _redis_client:
+        _redis_client.close()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """FastAPI lifespan context manager for startup and shutdown."""
+    _do_startup()
+    yield
+    _do_shutdown()
+
+app = FastAPI(title="Incident Postmortem API", lifespan=lifespan)
 
 instrumentator = Instrumentator(excluded_handlers=["/metrics"])
 instrumentator.instrument(app)
@@ -36,12 +78,6 @@ app.add_middleware(
     allow_headers=["*"],
     allow_credentials=False,
 )
-
-_redis_client = None
-_consumer_thread: Optional[threading.Thread] = None
-_stop_event = threading.Event()
-_producer = None
-_weaviate_client = None
 
 class TriggerRequest(BaseModel):
     """Request payload for triggering postmortem analysis."""
@@ -87,33 +123,6 @@ def _consume_postmortems():
         except Exception as e:
             logger.error("Failed to store postmortem: %s", e)
     consumer.close()
-
-@app.on_event("startup")
-def startup():
-    """Initialize Redis, Kafka producer, and start postmortem consumer thread; ping Redis for fail-fast on connection error."""
-    global _consumer_thread, _producer, _redis_client, _weaviate_client
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        logger.error("Error: GEMINI_API_KEY environment variable is required")
-        raise RuntimeError("GEMINI_API_KEY environment variable is required")
-    _redis_client = get_redis_client()
-    _redis_client.ping()  # fail fast if Redis is unreachable
-    _weaviate_client = get_client()
-    _producer = get_producer()
-    _consumer_thread = threading.Thread(target=_consume_postmortems, daemon=True)
-    _consumer_thread.start()
-
-@app.on_event("shutdown")
-def shutdown():
-    _stop_event.set()
-    if _consumer_thread:
-        _consumer_thread.join(timeout=5)
-    if _producer:
-        _producer.flush()
-    if _weaviate_client:
-        _weaviate_client.close()
-    if _redis_client:
-        _redis_client.close()
 
 @app.get("/postmortems")
 def list_postmortems():
