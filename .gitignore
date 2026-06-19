@@ -13,3 +13,6 @@ data/kafka/
 .idea/
 .vscode/
 .claude/memory.md
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
