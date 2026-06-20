@@ -63,6 +63,7 @@ def process_batches(batches, triage, correlation, rca, writer, delay_seconds):
 
 def run():
     """Initialize agents, consume alerts from Kafka, run pipeline sequentially, and publish postmortems."""
+    shutdown_event.clear()  # Module-level Event persists across calls; reset state (e.g., between test runs)
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
 

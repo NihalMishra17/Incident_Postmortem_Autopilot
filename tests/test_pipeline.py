@@ -286,3 +286,31 @@ def test_process_batches_handles_multiple_services():
     assert correlation.process_batch.call_count == 3
     assert rca.process_batch.call_count == 3
     assert writer.process_batch.call_count == 3
+
+
+@patch('signal.signal')
+@patch('dspy.configure')
+@patch('dspy.LM')
+@patch('agents.pipeline.shutdown_event')
+@patch('agents.pipeline.PostmortemWriter')
+@patch('agents.pipeline.RCAAgent')
+@patch('agents.pipeline.CorrelationAgent')
+@patch('agents.pipeline.TriageAgent')
+@patch('agents.pipeline.get_consumer')
+def test_run_clears_shutdown_event_on_start(
+    mock_get_consumer, mock_triage, mock_correlation, mock_rca,
+    mock_writer, mock_event, mock_lm, mock_configure, mock_signal
+):
+    """Should call shutdown_event.clear() on run() start to reset state between calls."""
+    # Consumer returns no messages; loop exits after one is_set() check
+    mock_consumer = MagicMock()
+    mock_consumer.poll.return_value = None
+    mock_get_consumer.return_value = mock_consumer
+
+    # is_set: False → enter loop, True → exit immediately
+    mock_event.is_set.side_effect = [False, True]
+
+    from agents.pipeline import run
+    run()
+
+    mock_event.clear.assert_called_once()
