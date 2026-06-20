@@ -321,3 +321,13 @@ python -m agents.pipeline
 ```
 
 Check API cache and query postmortems as they arrive.
+
+### Frontend Tests
+
+Run the React component test suite (Vitest 2.x + React Testing Library + happy-dom):
+
+```bash
+cd frontend && npm run test
+```
+
+54 tests across 9 files covering ThemeProvider, BlastRadiusGraph, FixCandidateList, VerifyPanel, IncidentFeed, and PostmortemDetail components.
