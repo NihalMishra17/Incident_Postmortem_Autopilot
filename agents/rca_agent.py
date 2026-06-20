@@ -25,29 +25,35 @@ class RCAModule(dspy.Module):
         )
 
 class RCAAgent:
-    """Synthesizes alert, blast radius, and historical incidents into structured root cause analysis."""
+    """Synthesizes alert, blast radius, and historical incidents into structured root cause analysis.
+
+    Requires dspy.configure() to be called globally by the caller before instantiation.
+    """
     def __init__(self):
-        lm = dspy.LM(
-            f"gemini/{os.getenv('GEMINI_MODEL', 'gemini-2.0-flash')}",
-            api_key=os.getenv("GEMINI_API_KEY"),
-            num_retries=5,
-        )
-        # dspy.configure() sets the global LM for all DSPy operations in this agent
-        dspy.configure(lm=lm)
         self.module = RCAModule()
 
+    def process_batch(self, alerts: list[dict]) -> list[dict]:
+        """Run DSPy ChainOfThought RCA individually per alert, truncating inputs to manage token limits."""
+        results = []
+        for alert in alerts:
+            try:
+                service = str(alert.get("service", ""))[:128]
+                message = str(alert.get("message", ""))[:2048]
+                result = self.module(
+                    alert_data=f"service={service} message={message}",
+                    blast_radius=", ".join(alert.get("blast_radius", []))[:512],
+                    correlated_incidents=str(alert.get("correlated_incidents", []))[:2048],
+                )
+                if not getattr(result, "root_cause_analysis", None) or not str(result.root_cause_analysis).strip():
+                    raise ValueError("DSPy output missing required field: root_cause_analysis")
+                results.append({**alert, "rca_result": result.root_cause_analysis})
+            except Exception as e:
+                logger.warning("RCA failed for alert %s: %s", alert.get("alert_id"), e)
+                results.append({**alert, "rca_result": "RCA unavailable due to processing error"})
+        return results
+
     def process(self, alert: dict) -> dict:
-        """Truncate inputs to manage token limits, then invoke DSPy chain-of-thought analysis."""
-        try:
-            # Truncate inputs to prevent excessive token consumption
-            service = str(alert.get("service", ""))[:128]
-            message = str(alert.get("message", ""))[:2048]
-            result = self.module(
-                alert_data=f"service={service} message={message}",
-                blast_radius=", ".join(alert.get("blast_radius", []))[:512],
-                correlated_incidents=str(alert.get("correlated_incidents", []))[:2048],
-            )
-            return {**alert, "rca_result": result.root_cause_analysis}
-        except Exception as e:
-            logger.warning("RCA failed for alert %s: %s", alert.get("alert_id"), e)
-            return {**alert, "rca_result": "RCA unavailable due to processing error"}
+        return self.process_batch([alert])[0]
+
+    def close(self):
+        pass

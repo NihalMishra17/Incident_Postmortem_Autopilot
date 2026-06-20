@@ -355,3 +355,93 @@ def test_postmortem_writer_close(postmortem_writer, mock_kafka_producer, mock_we
 
     mock_kafka_producer.flush.assert_called_once()
     mock_weaviate_client.close.assert_called_once()
+
+
+def test_process_batch_multiple_alerts(postmortem_writer, mock_kafka_producer):
+    """Should process multiple alerts in batch and flush Kafka once at end."""
+    mock_result1 = MagicMock()
+    mock_result1.title = "Incident 1"
+    mock_result1.root_cause = "Root cause 1"
+    mock_result1.timeline = "Timeline 1"
+    mock_result1.remediation = "Remediation 1"
+    mock_result1.prevention = "Prevention 1"
+
+    mock_result2 = MagicMock()
+    mock_result2.title = "Incident 2"
+    mock_result2.root_cause = "Root cause 2"
+    mock_result2.timeline = "Timeline 2"
+    mock_result2.remediation = "Remediation 2"
+    mock_result2.prevention = "Prevention 2"
+
+    postmortem_writer.predictor.side_effect = [mock_result1, mock_result2]
+
+    mock_fixes = [
+        FixCandidate(fix="Fix 1", confidence=0.5, reasoning="Reason 1"),
+        FixCandidate(fix="Fix 2", confidence=0.4, reasoning="Reason 2"),
+        FixCandidate(fix="Fix 3", confidence=0.3, reasoning="Reason 3"),
+    ]
+    with patch.object(postmortem_writer, '_rank_fixes_from_weaviate', return_value=mock_fixes):
+        alerts = [
+            {
+                "alert_id": "1",
+                "service": "database",
+                "message": "error 1",
+                "severity_level": "critical",
+                "blast_radius": ["service-a"],
+                "rca_result": "RCA 1",
+                "correlated_incidents": [],
+            },
+            {
+                "alert_id": "2",
+                "service": "api-gateway",
+                "message": "error 2",
+                "severity_level": "high",
+                "blast_radius": ["service-b"],
+                "rca_result": "RCA 2",
+                "correlated_incidents": [],
+            },
+        ]
+        results = postmortem_writer.process_batch(alerts)
+
+    assert len(results) == 2
+    assert results[0]["incident_id"] == "1"
+    assert results[0]["title"] == "Incident 1"
+    assert results[1]["incident_id"] == "2"
+    assert results[1]["title"] == "Incident 2"
+
+    # Verify flush called exactly once at end of batch
+    mock_kafka_producer.flush.assert_called_once()
+
+
+def test_process_single_alert_backward_compat(postmortem_writer, mock_kafka_producer):
+    """Should verify process(alert) shim returns a single dict, not a list."""
+    mock_result = MagicMock()
+    mock_result.title = "Test Incident"
+    mock_result.root_cause = "Test cause"
+    mock_result.timeline = "Test timeline"
+    mock_result.remediation = "Test remediation"
+    mock_result.prevention = "Test prevention"
+    postmortem_writer.predictor.return_value = mock_result
+
+    mock_fixes = [
+        FixCandidate(fix="Fix 1", confidence=0.5, reasoning="Reason 1"),
+        FixCandidate(fix="Fix 2", confidence=0.4, reasoning="Reason 2"),
+        FixCandidate(fix="Fix 3", confidence=0.3, reasoning="Reason 3"),
+    ]
+    with patch.object(postmortem_writer, '_rank_fixes_from_weaviate', return_value=mock_fixes):
+        alert = {
+            "alert_id": "123",
+            "service": "database",
+            "message": "connection timeout",
+            "severity_level": "high",
+            "blast_radius": [],
+            "rca_result": "Network issue",
+            "correlated_incidents": [],
+        }
+        result = postmortem_writer.process(alert)
+
+    # Should return dict, not list
+    assert isinstance(result, dict)
+    assert not isinstance(result, list)
+    assert result["incident_id"] == "123"
+    assert result["title"] == "Test Incident"

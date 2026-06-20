@@ -17,13 +17,17 @@ def get_producer(bootstrap_servers='localhost:9092'):
     return Producer(config)
 
 
-def get_consumer(topic, group_id, bootstrap_servers='localhost:9092'):
-    """Returns a Kafka consumer subscribed to the given topic."""
+def get_consumer(topic, group_id, bootstrap_servers='localhost:9092', enable_auto_commit=True):
+    """Returns a Kafka consumer subscribed to the given topic.
+
+    Args:
+        enable_auto_commit: If False, allows manual commit via consumer.commit() for windowed processing.
+    """
     config = {
         'bootstrap.servers': bootstrap_servers,
         'group.id': group_id,
         'auto.offset.reset': 'earliest',
-        'enable.auto.commit': True
+        'enable.auto.commit': enable_auto_commit
     }
     consumer = Consumer(config)
     consumer.subscribe([topic])

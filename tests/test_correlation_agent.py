@@ -104,3 +104,56 @@ def test_original_fields_preserved(correlation_agent):
         assert key in result
         assert result[key] == alert[key]
     assert "correlated_incidents" in result
+
+
+def test_process_batch_multiple_alerts(correlation_agent):
+    """Should process multiple alerts in batch and return list of enriched dicts."""
+    mock_embedding = MagicMock()
+    mock_embedding.embeddings = [MagicMock(values=[0.1] * 768)]
+    correlation_agent.genai_client.models.embed_content.return_value = mock_embedding
+
+    mock_obj = MagicMock()
+    mock_obj.properties = {
+        "title": "Past incident",
+        "root_cause": "Root cause",
+        "fix": "Fix applied",
+        "service": "database",
+    }
+
+    mock_response = MagicMock()
+    mock_response.objects = [mock_obj]
+    correlation_agent.collection.query.near_vector.return_value = mock_response
+
+    alerts = [
+        {"alert_id": "1", "service": "database", "message": "error 1"},
+        {"alert_id": "2", "service": "api-gateway", "message": "error 2"},
+    ]
+    results = correlation_agent.process_batch(alerts)
+
+    assert len(results) == 2
+    assert results[0]["alert_id"] == "1"
+    assert results[1]["alert_id"] == "2"
+    assert "correlated_incidents" in results[0]
+    assert "correlated_incidents" in results[1]
+    # Both alerts get the same correlated incidents since we batch the query
+    assert results[0]["correlated_incidents"] == results[1]["correlated_incidents"]
+
+
+def test_process_single_alert_backward_compat(correlation_agent):
+    """Should verify process(alert) shim returns a single dict, not a list."""
+    mock_embedding = MagicMock()
+    mock_embedding.embeddings = [MagicMock(values=[0.1] * 768)]
+    correlation_agent.genai_client.models.embed_content.return_value = mock_embedding
+
+    mock_response = MagicMock()
+    mock_response.objects = []
+    correlation_agent.collection.query.near_vector.return_value = mock_response
+
+    alert = {"alert_id": "123", "service": "api-gateway", "message": "latency spike"}
+    result = correlation_agent.process(alert)
+
+    # Should return dict, not list
+    assert isinstance(result, dict)
+    assert not isinstance(result, list)
+    assert result["alert_id"] == "123"
+    assert "correlated_incidents" in result

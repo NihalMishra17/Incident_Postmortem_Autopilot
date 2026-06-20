@@ -50,7 +50,11 @@ python data/seed_weaviate.py
 python -m agents.pipeline
 ```
 
-Consumes alerts from the `alerts` topic and publishes postmortems to `postmortems`.
+Consumes alerts from the `alerts` topic, windows them in 30-second batches per service, and publishes postmortems to `postmortems`. Use `WINDOW_SIZE_SECONDS=5` for faster local testing.
+
+```bash
+WINDOW_SIZE_SECONDS=5 python -m agents.pipeline
+```
 
 ### 6. Start the API server
 
@@ -92,15 +96,17 @@ curl http://localhost:8000/postmortems/{incident_id}
     alerts topic
          │
     ┌────▼────────────────────────────────────────────────────┐
-    │              Agent Pipeline (Kafka consumer)            │
+    │         Agent Pipeline (windowed Kafka consumer)        │
     ├──────────────────────────────────────────────────────────┤
+    │ AlertBatcher: 30s tumbling window per service             │
+    │      ↓ (on window close)                                  │
     │ TriageAgent: severity classification + Neo4j blast radius│
     │      ↓                                                    │
-    │ CorrelationAgent: Weaviate near_vector (top-3)          │
+    │ CorrelationAgent: 1 embedding/batch → Weaviate (top-3)  │
     │      ↓                                                    │
     │ RCAAgent: DSPy ChainOfThought synthesis                  │
     │      ↓                                                    │
-    │ PostmortemWriter: structured output → Kafka             │
+    │ PostmortemWriter: 1 flush/batch → Kafka                 │
     └────┬─────────────────────────────────────────────────────┘
          │
 postmortems topic
@@ -112,6 +118,8 @@ postmortems topic
     │   cache, TTL)         │
     └───────────────────────┘
 ```
+
+Alerts accumulate per-service over `WINDOW_SIZE_SECONDS` (default 30). When a window closes, all agents process the batch at once, reducing redundant embedding and LLM calls. `MAX_ALERTS_PER_WINDOW_PER_SERVICE` (default 100) caps the batch size.
 
 ## Kafka Topics
 
@@ -204,13 +212,15 @@ Verifies an AI-generated postmortem with engineer-confirmed root cause and fix. 
 
 ## Agent Flow
 
-1. **TriageAgent** — Classifies severity (P1→critical, P2→high, P3→medium) and queries Neo4j for affected services (3-hop blast radius via DEPENDS_ON|CALLS edges).
+Alerts are windowed per-service (default 30 seconds). Within each window:
 
-2. **CorrelationAgent** — Embeds alert description using Gemini `gemini-embedding-001`, searches Weaviate for top-3 similar past incidents.
+1. **TriageAgent** — Classifies severity per-alert (P1→critical, P2→high, P3→medium) and queries Neo4j for affected services (3-hop blast radius via DEPENDS_ON|CALLS edges).
 
-3. **RCAAgent** — Synthesizes logs, dependency graph, and historical incidents using DSPy ChainOfThought and Gemini LLM.
+2. **CorrelationAgent** — Embeds a single concatenated query for the entire batch using Gemini `gemini-embedding-001`, searches Weaviate for top-3 similar past incidents, and attaches results to all alerts.
 
-4. **PostmortemWriter** — Generates structured postmortem object and publishes to Kafka `postmortems` topic.
+3. **RCAAgent** — Runs DSPy ChainOfThought per-alert to synthesize logs, dependency graph, and correlated incidents.
+
+4. **PostmortemWriter** — Generates structured postmortem per-alert and flushes Kafka producer once per batch to reduce network round-trips.
 
 ## Human Verification Loop
 
@@ -227,6 +237,11 @@ NEO4J_PASSWORD=neo4jpassword
 
 # Kafka Event Streaming
 KAFKA_BOOTSTRAP_SERVERS=localhost:9092
+
+# Alert Windowing (Pipeline)
+WINDOW_SIZE_SECONDS=30                      # Tumbling window duration (1-3600 sec)
+MAX_ALERTS_PER_WINDOW_PER_SERVICE=100       # Max alerts per service per window (1-10000)
+SERVICE_BATCH_DELAY_SECONDS=1               # Seconds between service batch LLM calls to avoid rate limits (0-10)
 
 # Weaviate Vector Database
 WEAVIATE_HOST=localhost

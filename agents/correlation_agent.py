@@ -15,10 +15,21 @@ class CorrelationAgent:
         self.weaviate_client = get_client()
         self.collection = self.weaviate_client.collections.get("PastIncident")
 
-    def process(self, alert: dict) -> dict:
-        query = f"{alert.get('message', '')} {alert.get('service', '')}"
+    def process_batch(self, alerts: list[dict]) -> list[dict]:
+        """Embed batch query once, then attach correlated incidents to all alerts for efficiency.
+
+        Concatenates all messages and services into a single query to share one embedding call.
+        """
+        query_parts = []
+        for alert in alerts:
+            query_parts.append(alert.get('message', ''))
+            query_parts.append(alert.get('service', ''))
+        query = ' '.join(query_parts)[:4096]
         incidents = self._find_similar(query)
-        return {**alert, "correlated_incidents": incidents}
+        return [{**alert, "correlated_incidents": incidents} for alert in alerts]
+
+    def process(self, alert: dict) -> dict:
+        return self.process_batch([alert])[0]
 
     @retry(
         stop=stop_after_attempt(5),

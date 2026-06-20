@@ -86,3 +86,60 @@ def test_original_fields_preserved(rca_agent):
         assert key in result
         assert result[key] == alert[key]
     assert "rca_result" in result
+
+
+def test_process_batch_multiple_alerts(rca_agent):
+    """Should process multiple alerts in batch and return list of enriched dicts."""
+    mock_result1 = MagicMock()
+    mock_result1.root_cause_analysis = "RCA result for alert 1"
+    mock_result2 = MagicMock()
+    mock_result2.root_cause_analysis = "RCA result for alert 2"
+
+    # Side effect to return different results for each call
+    rca_agent.module.side_effect = [mock_result1, mock_result2]
+
+    alerts = [
+        {
+            "alert_id": "1",
+            "service": "database",
+            "message": "error 1",
+            "blast_radius": ["service-a"],
+            "correlated_incidents": [],
+        },
+        {
+            "alert_id": "2",
+            "service": "api-gateway",
+            "message": "error 2",
+            "blast_radius": ["service-b"],
+            "correlated_incidents": [],
+        },
+    ]
+    results = rca_agent.process_batch(alerts)
+
+    assert len(results) == 2
+    assert results[0]["alert_id"] == "1"
+    assert results[0]["rca_result"] == "RCA result for alert 1"
+    assert results[1]["alert_id"] == "2"
+    assert results[1]["rca_result"] == "RCA result for alert 2"
+
+
+def test_process_single_alert_backward_compat(rca_agent):
+    """Should verify process(alert) shim returns a single dict, not a list."""
+    mock_result = MagicMock()
+    mock_result.root_cause_analysis = "Analysis result"
+    rca_agent.module.return_value = mock_result
+
+    alert = {
+        "alert_id": "123",
+        "service": "api-gateway",
+        "message": "high latency",
+        "blast_radius": ["payment-service"],
+        "correlated_incidents": [],
+    }
+    result = rca_agent.process(alert)
+
+    # Should return dict, not list
+    assert isinstance(result, dict)
+    assert not isinstance(result, list)
+    assert result["alert_id"] == "123"
+    assert "rca_result" in result

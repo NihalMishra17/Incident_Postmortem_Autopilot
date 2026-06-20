@@ -122,41 +122,61 @@ class PostmortemWriter:
                 )
             ] * 3
 
+    def process_batch(self, alerts: list[dict]) -> list[dict]:
+        """Generate postmortems for all alerts and flush Kafka producer once per batch.
+
+        Produces individual postmortems per alert, then calls producer.flush() once at the end
+        to reduce network overhead vs flushing after each message.
+        """
+        postmortems = []
+        for alert in alerts:
+            try:
+                service = str(alert.get("service", ""))[:128]
+                message = str(alert.get("message", ""))[:2048]
+                result = self.predictor(
+                    alert_data=f"service={service} message={message}",
+                    blast_radius=", ".join(alert.get("blast_radius", []))[:512],
+                    rca_result=str(alert.get("rca_result", ""))[:4096],
+                    correlated_incidents=str(alert.get("correlated_incidents", []))[:2048],
+                )
+
+                # Validate all required fields to prevent publishing malformed postmortems.
+                required_fields = {
+                    "title": getattr(result, "title", None),
+                    "root_cause": getattr(result, "root_cause", None),
+                    "timeline": getattr(result, "timeline", None),
+                    "remediation": getattr(result, "remediation", None),
+                    "prevention": getattr(result, "prevention", None),
+                }
+                missing_fields = [k for k, v in required_fields.items() if not v or not str(v).strip()]
+                if missing_fields:
+                    raise ValueError(f"DSPy output missing required fields: {', '.join(missing_fields)}")
+
+                suggested_fixes = self._rank_fixes_from_weaviate(required_fields["root_cause"])
+
+                postmortem = {
+                    "incident_id": alert.get("alert_id", str(uuid.uuid4())),
+                    "title": required_fields["title"],
+                    "severity": alert.get("severity_level", "unknown"),
+                    "affected_services": alert.get("blast_radius", []),
+                    "root_cause": required_fields["root_cause"],
+                    "timeline": required_fields["timeline"],
+                    "remediation": required_fields["remediation"],
+                    "prevention": required_fields["prevention"],
+                    "suggested_fixes": [f.model_dump() for f in suggested_fixes],
+                    "generated_at": datetime.now(timezone.utc).isoformat(),
+                }
+                produce_json(self.producer, "postmortems", postmortem)
+                logger.info("Postmortem published for incident %s", postmortem["incident_id"])
+                postmortems.append(postmortem)
+            except Exception as e:
+                logger.error("PostmortemWriter failed: %s", e)
+                raise
+        self.producer.flush()
+        return postmortems
+
     def process(self, alert: dict) -> dict:
-        """Invoke DSPy prediction, format postmortem, and publish to Kafka with optimistic flushing."""
-        try:
-            # Truncate inputs to manage token limits
-            service = str(alert.get("service", ""))[:128]
-            message = str(alert.get("message", ""))[:2048]
-            result = self.predictor(
-                alert_data=f"service={service} message={message}",
-                blast_radius=", ".join(alert.get("blast_radius", []))[:512],
-                rca_result=str(alert.get("rca_result", ""))[:4096],
-                correlated_incidents=str(alert.get("correlated_incidents", []))[:2048],
-            )
-
-            # Rank fixes from Weaviate
-            suggested_fixes = self._rank_fixes_from_weaviate(result.root_cause)
-
-            postmortem = {
-                "incident_id": alert.get("alert_id", str(uuid.uuid4())),
-                "title": result.title,
-                "severity": alert.get("severity_level", "unknown"),
-                "affected_services": alert.get("blast_radius", []),
-                "root_cause": result.root_cause,
-                "timeline": result.timeline,
-                "remediation": result.remediation,
-                "prevention": result.prevention,
-                "suggested_fixes": [f.model_dump() for f in suggested_fixes],
-                "generated_at": datetime.now(timezone.utc).isoformat(),
-            }
-            produce_json(self.producer, "postmortems", postmortem)
-            self.producer.flush()
-            logger.info("Postmortem published for incident %s", postmortem["incident_id"])
-            return postmortem
-        except Exception as e:
-            logger.error("PostmortemWriter failed: %s", e)
-            raise
+        return self.process_batch([alert])[0]
 
     def close(self):
         self.producer.flush()
