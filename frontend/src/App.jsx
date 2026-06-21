@@ -5,12 +5,21 @@ import IncidentFeed from './components/IncidentFeed'
 import PostmortemDetail from './components/PostmortemDetail'
 
 /**
- * Main App component. Manages drawer state for mobile navigation and closes drawer on Escape key.
+ * Main App component. Manages drawer state for mobile navigation, closes drawer on Escape key, and manages sidebar width (default 240px) with persistence to localStorage. Restores sidebar width from localStorage on mount and passes width/setter to IncidentFeed for desktop drag-to-resize.
  */
 export default function App() {
   const { theme, toggle } = useTheme()
   const [selectedId, setSelectedId] = useState(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const [sidebarWidth, setSidebarWidth] = useState(240)
+
+  useEffect(() => {
+    const stored = localStorage.getItem('sidebarWidth')
+    if (stored !== null) {
+      const parsed = parseInt(stored, 10)
+      if (!Number.isNaN(parsed)) setSidebarWidth(Math.min(400, Math.max(180, parsed)))
+    }
+  }, [])
 
   useEffect(() => {
     const handleKeyDown = (e) => { if (e.key === 'Escape' && drawerOpen) setDrawerOpen(false) }
@@ -48,7 +57,7 @@ export default function App() {
         />
       )}
       <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
-        <IncidentFeed selectedId={selectedId} onSelect={setSelectedId} drawerOpen={drawerOpen} setDrawerOpen={setDrawerOpen} />
+        <IncidentFeed selectedId={selectedId} onSelect={setSelectedId} drawerOpen={drawerOpen} setDrawerOpen={setDrawerOpen} sidebarWidth={sidebarWidth} setSidebarWidth={setSidebarWidth} />
         <PostmortemDetail incidentId={selectedId} />
       </div>
     </div>

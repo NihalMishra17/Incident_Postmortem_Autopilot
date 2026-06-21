@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ThemeProvider } from '../../context/ThemeContext'
 import App from '../../App'
@@ -348,5 +348,36 @@ describe('App mobile drawer', () => {
 
     // Drawer should be closed
     expect(drawer).toHaveClass('-translate-x-full')
+  })
+
+  it('sidebar has resizable drag handle and CSS variable for width', () => {
+    vi.spyOn(usePostmortemsModule, 'usePostmortems').mockReturnValue({
+      postmortems: [],
+      loading: false,
+      error: null,
+      refetch: vi.fn(),
+    })
+
+    vi.spyOn(usePostmortemModule, 'usePostmortem').mockReturnValue({
+      postmortem: null,
+      loading: false,
+      error: null,
+      refetch: vi.fn(),
+    })
+
+    const { container } = renderApp()
+
+    // Find drag handle
+    const dragHandle = container.querySelector('.cursor-col-resize')
+    expect(dragHandle).toBeInTheDocument()
+    expect(dragHandle).toHaveClass('hover:bg-pm-border')
+    expect(dragHandle).toHaveClass('hidden')
+    expect(dragHandle).toHaveClass('md:block')
+
+    // Verify the aside has the CSS variable style attribute with initial width
+    const aside = container.querySelector('aside')
+    expect(aside).toHaveAttribute('style')
+    expect(aside.getAttribute('style')).toContain('--sidebar-w')
+    expect(aside.getAttribute('style')).toContain('240px') // default sidebarWidth
   })
 })

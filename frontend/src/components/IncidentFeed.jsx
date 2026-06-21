@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import { formatDistanceToNow } from 'date-fns'
 import { usePostmortems } from '../hooks/usePostmortems'
 import { RefreshCw } from 'lucide-react'
@@ -19,17 +20,52 @@ function relativeTime(str) {
 }
 
 /**
- * IncidentFeed displays a list of postmortems. On mobile, renders as a fixed-position drawer with slide-in animation; on desktop (md+), renders as a sidebar. Closes drawer on incident selection.
+ * IncidentFeed displays a list of postmortems with drag-to-resize on desktop via right-edge drag handle. On mobile, renders as a fixed-position drawer with slide-in animation; on desktop (md+), renders as a sidebar. Closes drawer on incident selection.
  * @param {string} selectedId - Currently selected incident ID
  * @param {function} onSelect - Callback to update selected incident
  * @param {boolean} drawerOpen - Whether drawer is open (mobile only)
  * @param {function} setDrawerOpen - Callback to toggle drawer state
+ * @param {number} sidebarWidth - Current sidebar width in pixels (desktop only)
+ * @param {function} setSidebarWidth - Callback to update sidebar width
  */
-export default function IncidentFeed({ selectedId, onSelect, drawerOpen, setDrawerOpen }) {
+export default function IncidentFeed({ selectedId, onSelect, drawerOpen, setDrawerOpen, sidebarWidth, setSidebarWidth }) {
   const { postmortems, loading, error } = usePostmortems()
+  const handlersRef = useRef({})
+
+  const handleMouseDown = (e) => {
+    e.preventDefault()
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+    let latestWidth = sidebarWidth
+    const handleMouseMove = (e) => {
+      latestWidth = Math.min(400, Math.max(180, e.clientX))
+      setSidebarWidth(latestWidth)
+    }
+    const handleMouseUp = () => {
+      localStorage.setItem('sidebarWidth', String(latestWidth))
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      document.removeEventListener('mousemove', handlersRef.current.move)
+      document.removeEventListener('mouseup', handlersRef.current.up)
+    }
+    handlersRef.current = { move: handleMouseMove, up: handleMouseUp }
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+  }
+
+  useEffect(() => {
+    return () => {
+      if (handlersRef.current.move) {
+        document.removeEventListener('mousemove', handlersRef.current.move)
+        document.removeEventListener('mouseup', handlersRef.current.up)
+      }
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+  }, [])
 
   return (
-    <aside className={`fixed inset-y-0 left-0 z-50 w-80 transition-transform duration-200 md:relative md:inset-y-auto md:left-auto md:z-auto md:w-[220px] md:translate-x-0 ${drawerOpen ? 'translate-x-0' : '-translate-x-full'} overscroll-contain shrink-0 flex flex-col border-r border-pm-border dark:border-pm-border-dark bg-pm-bg dark:bg-pm-bg-dark`}>
+    <aside style={{ '--sidebar-w': sidebarWidth + 'px' }} className={`fixed inset-y-0 left-0 z-50 w-80 transition-transform duration-200 md:relative md:inset-y-auto md:left-auto md:z-auto md:w-[var(--sidebar-w)] md:translate-x-0 ${drawerOpen ? 'translate-x-0' : '-translate-x-full'} overscroll-contain shrink-0 flex flex-col border-r border-pm-border dark:border-pm-border-dark bg-pm-bg dark:bg-pm-bg-dark`}>
       <div className="px-3 py-3 border-b border-pm-border dark:border-pm-border-dark flex items-center justify-between">
         <span className="text-label font-semibold text-pm-text dark:text-pm-text-dark uppercase tracking-wide">
           Incidents
@@ -75,6 +111,10 @@ export default function IncidentFeed({ selectedId, onSelect, drawerOpen, setDraw
           )
         })}
       </div>
+      <div
+        className="absolute top-0 right-0 h-full w-1 cursor-col-resize bg-transparent hover:bg-pm-border hidden md:block"
+        onMouseDown={handleMouseDown}
+      />
     </aside>
   )
 }
