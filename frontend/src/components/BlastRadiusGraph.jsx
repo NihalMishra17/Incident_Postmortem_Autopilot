@@ -7,7 +7,7 @@ const THEME = {
   label:      '#2E2C22',
 }
 
-export default function BlastRadiusGraph({ affected_services = [] }) {
+export default function BlastRadiusGraph({ affected_services = [], width: overrideW, height: overrideH }) {
   const services = Array.isArray(affected_services)
     ? affected_services
     : typeof affected_services === 'string'
@@ -28,8 +28,8 @@ export default function BlastRadiusGraph({ affected_services = [] }) {
 
   return (
     <svg
-      width={svgW}
-      height={svgH}
+      width={overrideW ?? svgW}
+      height={overrideH ?? svgH}
       viewBox={`0 0 ${svgW} ${svgH}`}
       style={{ maxWidth: '100%', overflow: 'visible' }}
       aria-label="Blast radius graph"

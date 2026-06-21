@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react'
 import { usePostmortem } from '../hooks/usePostmortem'
 import BlastRadiusGraph from './BlastRadiusGraph'
 import VerifyPanel from './VerifyPanel'
@@ -31,6 +32,14 @@ function Section({ title, children }) {
 
 export default function PostmortemDetail({ incidentId }) {
   const { postmortem, loading, error, refetch } = usePostmortem(incidentId)
+  const [graphModalOpen, setGraphModalOpen] = useState(false)
+
+  useEffect(() => {
+    if (!graphModalOpen) return
+    const handler = (e) => { if (e.key === 'Escape') setGraphModalOpen(false) }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [graphModalOpen])
 
   if (!incidentId) {
     return (
@@ -97,10 +106,30 @@ export default function PostmortemDetail({ incidentId }) {
 
         {affectedServices.length > 0 && (
           <Section title="Blast radius">
-            <div className="rounded-card border border-pm-border dark:border-pm-border-dark bg-pm-surface dark:bg-pm-surface-dark p-4 overflow-x-auto">
-              <BlastRadiusGraph affected_services={affectedServices} severity={postmortem.severity} />
+            <div
+              onClick={() => setGraphModalOpen(true)}
+              className="rounded-card border border-pm-border dark:border-pm-border-dark bg-pm-surface dark:bg-pm-surface-dark p-4 overflow-x-auto cursor-pointer hover:bg-pm-border/10 dark:hover:bg-pm-border-dark/10 transition-colors"
+            >
+              <BlastRadiusGraph affected_services={affectedServices} />
             </div>
           </Section>
+        )}
+
+        {graphModalOpen && (
+          <>
+            <div
+              className="fixed inset-0 z-50 bg-black/40"
+              onClick={() => setGraphModalOpen(false)}
+            />
+            <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none">
+              <div
+                className="pointer-events-auto bg-pm-surface dark:bg-pm-surface-dark border border-pm-border dark:border-pm-border-dark rounded-card shadow-2xl p-8 w-[90vw] max-w-3xl"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <BlastRadiusGraph affected_services={affectedServices} width={620} height={360} />
+              </div>
+            </div>
+          </>
         )}
 
         {postmortem.remediation && (
