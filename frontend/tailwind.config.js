@@ -17,10 +17,10 @@ export default {
           accent:  { DEFAULT: '#5F7A3F', dark: '#6B8A4A' },
         },
         sev: {
-          critical: '#B5482F',
-          high:     '#A8782C',
-          medium:   '#8C8769',
-          low:      '#8C8769',
+          critical: '#FF3B30',
+          high:     '#FF9500',
+          medium:   '#34C759',
+          low:      '#8E8E93',
         },
       },
       borderRadius: {
@@ -33,5 +33,5 @@ export default {
       },
     },
   },
-  plugins: [],
+  plugins: [require('@tailwindcss/typography')],
 }

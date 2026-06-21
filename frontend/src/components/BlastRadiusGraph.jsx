@@ -1,11 +1,13 @@
-const SEV_COLORS = {
-  CRITICAL: '#B5482F',
-  HIGH: '#A8782C',
-  MEDIUM: '#8C8769',
-  LOW: '#8C8769',
+const THEME = {
+  edge:       '#D6D1C2',
+  hub:        '#8C8769',
+  nodeStroke: '#D6D1C2',
+  nodeFill:   '#F6F3E9',
+  text:       '#8C8769',
+  label:      '#2E2C22',
 }
 
-export default function BlastRadiusGraph({ affected_services = [], severity = 'MEDIUM' }) {
+export default function BlastRadiusGraph({ affected_services = [] }) {
   const services = Array.isArray(affected_services)
     ? affected_services
     : typeof affected_services === 'string'
@@ -14,7 +16,6 @@ export default function BlastRadiusGraph({ affected_services = [], severity = 'M
 
   if (services.length === 0) return null
 
-  const edgeColor = SEV_COLORS[severity] || SEV_COLORS.MEDIUM
   const nodeW = 90
   const nodeH = 28
   const spacing = 16
@@ -41,14 +42,14 @@ export default function BlastRadiusGraph({ affected_services = [], severity = 'M
             key={i}
             x1={centerX} y1={incidentY + 8}
             x2={nx} y2={nodeY - nodeH / 2}
-            stroke={edgeColor}
+            stroke={THEME.edge}
             strokeWidth={1}
-            strokeOpacity={0.6}
+            strokeOpacity={0.8}
           />
         )
       })}
-      <circle cx={centerX} cy={incidentY} r={8} fill={edgeColor} fillOpacity={0.9} />
-      <text x={centerX} y={incidentY - 12} textAnchor="middle" fontSize="10" fill={edgeColor} fontWeight="500">
+      <circle cx={centerX} cy={incidentY} r={8} fill={THEME.hub} fillOpacity={0.85} />
+      <text x={centerX} y={incidentY - 12} textAnchor="middle" fontSize="10" fill={THEME.text} fontWeight="500">
         incident
       </text>
       {services.map((svc, i) => {
@@ -59,16 +60,15 @@ export default function BlastRadiusGraph({ affected_services = [], severity = 'M
               x={nx} y={nodeY - nodeH / 2}
               width={nodeW} height={nodeH}
               rx={5} ry={5}
-              fill="none"
-              stroke={edgeColor}
+              fill={THEME.nodeFill}
+              stroke={THEME.nodeStroke}
               strokeWidth={1}
-              strokeOpacity={0.5}
             />
             <text
               x={nx + nodeW / 2} y={nodeY + 4}
               textAnchor="middle"
               fontSize="10"
-              fill={edgeColor}
+              fill={THEME.label}
               fontFamily="Inter, system-ui, sans-serif"
             >
               {svc.length > 12 ? svc.slice(0, 11) + '…' : svc}

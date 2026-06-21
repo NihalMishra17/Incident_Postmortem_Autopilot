@@ -3,7 +3,9 @@ import { CheckCircle2, AlertCircle, Loader2 } from 'lucide-react'
 import FixCandidateList from './FixCandidateList'
 
 export default function VerifyPanel({ postmortem, onVerified }) {
-  const [rootCause, setRootCause] = useState(postmortem.root_cause || '')
+  const [rootCause, setRootCause] = useState(
+    (postmortem.root_cause || '').replace(/\*\*([^*]+)\*\*/g, '$1').replace(/\*([^*]+)\*/g, '$1')
+  )
   const [selectedFix, setSelectedFix] = useState(null)
   const [customFix, setCustomFix] = useState('')
   const [verifiedBy, setVerifiedBy] = useState('')
@@ -152,14 +154,16 @@ export default function VerifyPanel({ postmortem, onVerified }) {
         </div>
       )}
 
-      <button
-        type="submit"
-        disabled={status === 'loading'}
-        className="flex items-center gap-2 rounded-card bg-pm-accent dark:bg-pm-accent-dark text-white px-4 py-2 text-label font-medium transition-opacity disabled:opacity-60 hover:opacity-90"
-      >
-        {status === 'loading' && <Loader2 size={13} className="animate-spin" />}
-        Confirm & Verify
-      </button>
+      <div className="flex flex-col md:flex-row space-y-2 md:space-y-0 md:space-x-2">
+        <button
+          type="submit"
+          disabled={status === 'loading'}
+          className="w-full md:w-auto flex items-center justify-center gap-2 rounded-card bg-pm-accent dark:bg-pm-accent-dark text-white px-4 py-2 text-label font-medium transition-opacity disabled:opacity-60 hover:opacity-90"
+        >
+          {status === 'loading' && <Loader2 size={13} className="animate-spin" />}
+          Confirm & Verify
+        </button>
+      </div>
     </form>
   )
 }

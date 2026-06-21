@@ -2,19 +2,20 @@ import { usePostmortem } from '../hooks/usePostmortem'
 import BlastRadiusGraph from './BlastRadiusGraph'
 import VerifyPanel from './VerifyPanel'
 import { Loader2 } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
 
 const SEV_DOT = {
   CRITICAL: 'bg-sev-critical',
   HIGH: 'bg-sev-high',
-  MEDIUM: 'bg-pm-muted',
-  LOW: 'bg-pm-muted',
+  MEDIUM: 'bg-sev-medium',
+  LOW: 'bg-sev-low',
 }
 
 const SEV_LABEL = {
   CRITICAL: 'text-sev-critical',
   HIGH: 'text-sev-high',
-  MEDIUM: 'text-pm-muted',
-  LOW: 'text-pm-muted',
+  MEDIUM: 'text-sev-medium',
+  LOW: 'text-sev-low',
 }
 
 function Section({ title, children }) {
@@ -54,8 +55,8 @@ export default function PostmortemDetail({ incidentId }) {
   }
   if (!postmortem) return null
 
-  const dotClass = SEV_DOT[postmortem.severity] || 'bg-pm-muted'
-  const labelClass = SEV_LABEL[postmortem.severity] || 'text-pm-muted'
+  const dotClass = SEV_DOT[postmortem.severity?.toUpperCase()] || 'bg-pm-muted'
+  const labelClass = SEV_LABEL[postmortem.severity?.toUpperCase()] || 'text-pm-muted'
   const affectedServices = Array.isArray(postmortem.affected_services)
     ? postmortem.affected_services
     : postmortem.affected_services
@@ -64,14 +65,14 @@ export default function PostmortemDetail({ incidentId }) {
 
   return (
     <main className="flex-1 overflow-y-auto bg-pm-bg dark:bg-pm-bg-dark">
-      <div className="max-w-2xl mx-auto px-6 py-6 space-y-6">
+      <div className="max-w-2xl mx-auto px-4 md:px-6 py-4 md:py-6 space-y-6">
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <span className={`w-[5px] h-[5px] rounded-full shrink-0 ${dotClass}`} />
+            <span className={`w-2 h-2 rounded-full shrink-0 ${dotClass}`} />
             <span className={`text-label font-medium ${labelClass}`}>{postmortem.severity}</span>
             <span className="text-meta text-pm-muted dark:text-pm-muted-dark">· {postmortem.service}</span>
           </div>
-          <h1 className="text-[17px] font-semibold text-pm-text dark:text-pm-text-dark leading-snug">
+          <h1 className="text-[17px] md:text-[19px] font-semibold text-pm-text dark:text-pm-text-dark leading-snug">
             {postmortem.title}
           </h1>
         </div>
@@ -80,13 +81,17 @@ export default function PostmortemDetail({ incidentId }) {
 
         {postmortem.root_cause && (
           <Section title="Root cause">
-            <p className="text-body text-pm-text dark:text-pm-text-dark whitespace-pre-wrap">{postmortem.root_cause}</p>
+            <div className="prose prose-sm max-w-none text-pm-text dark:text-pm-text-dark [&_*]:text-inherit">
+              <ReactMarkdown>{postmortem.root_cause}</ReactMarkdown>
+            </div>
           </Section>
         )}
 
         {postmortem.timeline && (
           <Section title="Timeline">
-            <p className="text-body text-pm-text dark:text-pm-text-dark whitespace-pre-wrap">{postmortem.timeline}</p>
+            <div className="prose prose-sm max-w-none text-pm-text dark:text-pm-text-dark [&_*]:text-inherit">
+              <ReactMarkdown>{postmortem.timeline}</ReactMarkdown>
+            </div>
           </Section>
         )}
 
@@ -100,13 +105,17 @@ export default function PostmortemDetail({ incidentId }) {
 
         {postmortem.remediation && (
           <Section title="Remediation">
-            <p className="text-body text-pm-text dark:text-pm-text-dark whitespace-pre-wrap">{postmortem.remediation}</p>
+            <div className="prose prose-sm max-w-none text-pm-text dark:text-pm-text-dark [&_*]:text-inherit">
+              <ReactMarkdown>{postmortem.remediation}</ReactMarkdown>
+            </div>
           </Section>
         )}
 
         {postmortem.prevention && (
           <Section title="Prevention">
-            <p className="text-body text-pm-text dark:text-pm-text-dark whitespace-pre-wrap">{postmortem.prevention}</p>
+            <div className="prose prose-sm max-w-none text-pm-text dark:text-pm-text-dark [&_*]:text-inherit">
+              <ReactMarkdown>{postmortem.prevention}</ReactMarkdown>
+            </div>
           </Section>
         )}
 

@@ -322,7 +322,11 @@ python -m agents.pipeline
 
 Check API cache and query postmortems as they arrive.
 
-### Frontend Tests
+### Frontend
+
+The React UI is responsive for 320px+ viewports, with mobile drawer navigation, collapsible components, and adaptive typography.
+
+#### Frontend Tests
 
 Run the React component test suite (Vitest 2.x + React Testing Library + happy-dom):
 

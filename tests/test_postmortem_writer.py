@@ -163,6 +163,7 @@ def test_dspy_predictor_called_with_correct_args(postmortem_writer, mock_kafka_p
             "alert_id": "999",
             "service": "api-gateway",
             "message": "high error rate",
+            "timestamp": "2026-06-21T10:00:00Z",
             "severity_level": "critical",
             "blast_radius": ["auth-service", "payment-service"],
             "rca_result": "Database deadlock",
@@ -174,6 +175,8 @@ def test_dspy_predictor_called_with_correct_args(postmortem_writer, mock_kafka_p
     call_kwargs = postmortem_writer.predictor.call_args[1]
 
     assert "service=api-gateway" in call_kwargs["alert_data"]
+    assert "timestamp=" in call_kwargs["alert_data"]
+    assert "2026-06-21T10:00:00Z" in call_kwargs["alert_data"]
     assert "message=high error rate" in call_kwargs["alert_data"]
     assert call_kwargs["blast_radius"] == "auth-service, payment-service"
     assert call_kwargs["rca_result"] == "Database deadlock"

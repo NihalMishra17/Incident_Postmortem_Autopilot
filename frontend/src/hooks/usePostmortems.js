@@ -13,8 +13,8 @@ export function usePostmortems() {
       // Sort: unverified incidents first, then by recency (newest first)
       const sorted = [...data].sort((a, b) => {
         if (a.verified !== b.verified) return a.verified ? 1 : -1
-        const ta = a.generated_at || a.id || ''
-        const tb = b.generated_at || b.id || ''
+        const ta = a.generated_at || a.incident_id || ''
+        const tb = b.generated_at || b.incident_id || ''
         return tb.localeCompare(ta)
       })
       setPostmortems(sorted)

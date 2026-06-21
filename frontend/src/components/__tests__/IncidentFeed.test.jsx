@@ -19,7 +19,7 @@ describe('IncidentFeed', () => {
       refetch: vi.fn(),
     })
 
-    render(<IncidentFeed selectedId={null} onSelect={vi.fn()} />)
+    render(<IncidentFeed selectedId={null} onSelect={vi.fn()} drawerOpen={false} setDrawerOpen={vi.fn()} />)
 
     // RefreshCw spinner
     expect(document.querySelector('.animate-spin')).toBeInTheDocument()
@@ -33,7 +33,7 @@ describe('IncidentFeed', () => {
       refetch: vi.fn(),
     })
 
-    render(<IncidentFeed selectedId={null} onSelect={vi.fn()} />)
+    render(<IncidentFeed selectedId={null} onSelect={vi.fn()} drawerOpen={false} setDrawerOpen={vi.fn()} />)
 
     expect(screen.getByText('Network error')).toBeInTheDocument()
   })
@@ -46,7 +46,7 @@ describe('IncidentFeed', () => {
       refetch: vi.fn(),
     })
 
-    render(<IncidentFeed selectedId={null} onSelect={vi.fn()} />)
+    render(<IncidentFeed selectedId={null} onSelect={vi.fn()} drawerOpen={false} setDrawerOpen={vi.fn()} />)
 
     expect(screen.getByText(/no incidents yet/i)).toBeInTheDocument()
   })
@@ -54,15 +54,15 @@ describe('IncidentFeed', () => {
   it('renders incident list with service name and title', () => {
     vi.spyOn(usePostmortemsModule, 'usePostmortems').mockReturnValue({
       postmortems: [
-        { id: '1', service: 'auth-service', title: 'Auth failure', severity: 'HIGH', verified: false },
-        { id: '2', service: 'payment-service', title: 'Payment timeout', severity: 'CRITICAL', verified: false },
+        { incident_id: '1', service: 'auth-service', title: 'Auth failure', severity: 'HIGH', verified: false },
+        { incident_id: '2', service: 'payment-service', title: 'Payment timeout', severity: 'CRITICAL', verified: false },
       ],
       loading: false,
       error: null,
       refetch: vi.fn(),
     })
 
-    render(<IncidentFeed selectedId={null} onSelect={vi.fn()} />)
+    render(<IncidentFeed selectedId={null} onSelect={vi.fn()} drawerOpen={false} setDrawerOpen={vi.fn()} />)
 
     expect(screen.getByText('auth-service')).toBeInTheDocument()
     expect(screen.getByText('Auth failure')).toBeInTheDocument()
@@ -73,31 +73,63 @@ describe('IncidentFeed', () => {
   it('severity dot present', () => {
     vi.spyOn(usePostmortemsModule, 'usePostmortems').mockReturnValue({
       postmortems: [
-        { id: '1', service: 'auth-service', title: 'Auth failure', severity: 'CRITICAL', verified: false },
+        { incident_id: '1', service: 'auth-service', title: 'Auth failure', severity: 'CRITICAL', verified: false },
       ],
       loading: false,
       error: null,
       refetch: vi.fn(),
     })
 
-    const { container } = render(<IncidentFeed selectedId={null} onSelect={vi.fn()} />)
+    const { container } = render(<IncidentFeed selectedId={null} onSelect={vi.fn()} drawerOpen={false} setDrawerOpen={vi.fn()} />)
 
     const dot = container.querySelector('.bg-sev-critical')
+    expect(dot).toBeInTheDocument()
+  })
+
+  it('MEDIUM severity shows sev-medium dot', () => {
+    vi.spyOn(usePostmortemsModule, 'usePostmortems').mockReturnValue({
+      postmortems: [
+        { incident_id: '1', service: 'auth-service', title: 'Auth failure', severity: 'medium', verified: false },
+      ],
+      loading: false,
+      error: null,
+      refetch: vi.fn(),
+    })
+
+    const { container } = render(<IncidentFeed selectedId={null} onSelect={vi.fn()} drawerOpen={false} setDrawerOpen={vi.fn()} />)
+
+    const dot = container.querySelector('.bg-sev-medium')
+    expect(dot).toBeInTheDocument()
+  })
+
+  it('LOW severity shows sev-low dot', () => {
+    vi.spyOn(usePostmortemsModule, 'usePostmortems').mockReturnValue({
+      postmortems: [
+        { incident_id: '1', service: 'auth-service', title: 'Auth failure', severity: 'low', verified: false },
+      ],
+      loading: false,
+      error: null,
+      refetch: vi.fn(),
+    })
+
+    const { container } = render(<IncidentFeed selectedId={null} onSelect={vi.fn()} drawerOpen={false} setDrawerOpen={vi.fn()} />)
+
+    const dot = container.querySelector('.bg-sev-low')
     expect(dot).toBeInTheDocument()
   })
 
   it('verified checkmark for verified incidents', () => {
     vi.spyOn(usePostmortemsModule, 'usePostmortems').mockReturnValue({
       postmortems: [
-        { id: '1', service: 'auth-service', title: 'Auth failure', severity: 'HIGH', verified: true },
-        { id: '2', service: 'payment-service', title: 'Payment timeout', severity: 'CRITICAL', verified: false },
+        { incident_id: '1', service: 'auth-service', title: 'Auth failure', severity: 'HIGH', verified: true },
+        { incident_id: '2', service: 'payment-service', title: 'Payment timeout', severity: 'CRITICAL', verified: false },
       ],
       loading: false,
       error: null,
       refetch: vi.fn(),
     })
 
-    render(<IncidentFeed selectedId={null} onSelect={vi.fn()} />)
+    render(<IncidentFeed selectedId={null} onSelect={vi.fn()} drawerOpen={false} setDrawerOpen={vi.fn()} />)
 
     // Checkmark should appear for verified incident
     const buttons = screen.getAllByRole('button')
@@ -108,22 +140,24 @@ describe('IncidentFeed', () => {
   it('calls onSelect when incident clicked', async () => {
     const user = userEvent.setup()
     const onSelect = vi.fn()
+    const setDrawerOpen = vi.fn()
 
     vi.spyOn(usePostmortemsModule, 'usePostmortems').mockReturnValue({
       postmortems: [
-        { id: '1', service: 'auth-service', title: 'Auth failure', severity: 'HIGH', verified: false },
+        { incident_id: '1', service: 'auth-service', title: 'Auth failure', severity: 'HIGH', verified: false },
       ],
       loading: false,
       error: null,
       refetch: vi.fn(),
     })
 
-    render(<IncidentFeed selectedId={null} onSelect={onSelect} />)
+    render(<IncidentFeed selectedId={null} onSelect={onSelect} drawerOpen={false} setDrawerOpen={setDrawerOpen} />)
 
     const button = screen.getByText('Auth failure').closest('button')
     await user.click(button)
 
     expect(onSelect).toHaveBeenCalledWith('1')
+    expect(setDrawerOpen).toHaveBeenCalledWith(false)
   })
 
   it('relative timestamp renders deterministically', () => {
@@ -136,14 +170,14 @@ describe('IncidentFeed', () => {
 
     vi.spyOn(usePostmortemsModule, 'usePostmortems').mockReturnValue({
       postmortems: [
-        { id: '1', service: 'auth-service', title: 'Auth failure', severity: 'HIGH', verified: false, generated_at: fiveMinAgo },
+        { incident_id: '1', service: 'auth-service', title: 'Auth failure', severity: 'HIGH', verified: false, generated_at: fiveMinAgo },
       ],
       loading: false,
       error: null,
       refetch: vi.fn(),
     })
 
-    render(<IncidentFeed selectedId={null} onSelect={vi.fn()} />)
+    render(<IncidentFeed selectedId={null} onSelect={vi.fn()} drawerOpen={false} setDrawerOpen={vi.fn()} />)
 
     expect(screen.getByText(/5 minutes ago/i)).toBeInTheDocument()
 

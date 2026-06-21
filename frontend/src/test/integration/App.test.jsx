@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ThemeProvider } from '../../context/ThemeContext'
 import App from '../../App'
@@ -48,8 +48,8 @@ describe('App integration', () => {
     const user = userEvent.setup()
 
     const postmortems = [
-      { id: '1', service: 'auth-service', title: 'Auth failure', severity: 'HIGH', verified: false },
-      { id: '2', service: 'payment-service', title: 'Payment timeout', severity: 'CRITICAL', verified: false },
+      { incident_id: '1', service: 'auth-service', title: 'Auth failure', severity: 'HIGH', verified: false },
+      { incident_id: '2', service: 'payment-service', title: 'Payment timeout', severity: 'CRITICAL', verified: false },
     ]
 
     vi.spyOn(usePostmortemsModule, 'usePostmortems').mockReturnValue({
@@ -66,7 +66,7 @@ describe('App integration', () => {
       if (!id) {
         return { postmortem: null, loading: false, error: null, refetch: vi.fn() }
       }
-      const pm = postmortems.find(p => p.id === id)
+      const pm = postmortems.find(p => p.incident_id === id)
       return {
         postmortem: pm ? { ...pm, root_cause: `Root cause for ${id}` } : null,
         loading: false,
@@ -122,5 +122,231 @@ describe('App integration', () => {
 
     // Should remove dark class
     expect(document.documentElement.classList.contains('dark')).toBe(false)
+  })
+})
+
+describe('App mobile drawer', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('hamburger menu button renders in the document', () => {
+    vi.spyOn(usePostmortemsModule, 'usePostmortems').mockReturnValue({
+      postmortems: [],
+      loading: false,
+      error: null,
+      refetch: vi.fn(),
+    })
+
+    vi.spyOn(usePostmortemModule, 'usePostmortem').mockReturnValue({
+      postmortem: null,
+      loading: false,
+      error: null,
+      refetch: vi.fn(),
+    })
+
+    renderApp()
+
+    const hamburgerButton = screen.getByRole('button', { name: /open incident feed/i })
+    expect(hamburgerButton).toBeInTheDocument()
+  })
+
+  it('clicking hamburger button opens drawer (drawerOpen becomes true)', async () => {
+    const user = userEvent.setup()
+
+    vi.spyOn(usePostmortemsModule, 'usePostmortems').mockReturnValue({
+      postmortems: [],
+      loading: false,
+      error: null,
+      refetch: vi.fn(),
+    })
+
+    vi.spyOn(usePostmortemModule, 'usePostmortem').mockReturnValue({
+      postmortem: null,
+      loading: false,
+      error: null,
+      refetch: vi.fn(),
+    })
+
+    const { container } = renderApp()
+
+    // Initially drawer is closed (translate-x-full on mobile)
+    const drawer = container.querySelector('aside')
+    expect(drawer).toHaveClass('-translate-x-full')
+
+    // Click hamburger button
+    const hamburgerButton = screen.getByRole('button', { name: /open incident feed/i })
+    await user.click(hamburgerButton)
+
+    // Drawer should now be open (translate-x-0)
+    expect(drawer).toHaveClass('translate-x-0')
+    expect(drawer).not.toHaveClass('-translate-x-full')
+  })
+
+  it('clicking backdrop closes the drawer (drawerOpen becomes false)', async () => {
+    const user = userEvent.setup()
+
+    vi.spyOn(usePostmortemsModule, 'usePostmortems').mockReturnValue({
+      postmortems: [],
+      loading: false,
+      error: null,
+      refetch: vi.fn(),
+    })
+
+    vi.spyOn(usePostmortemModule, 'usePostmortem').mockReturnValue({
+      postmortem: null,
+      loading: false,
+      error: null,
+      refetch: vi.fn(),
+    })
+
+    const { container } = renderApp()
+
+    // Open drawer first
+    const hamburgerButton = screen.getByRole('button', { name: /open incident feed/i })
+    await user.click(hamburgerButton)
+
+    // Drawer is open
+    const drawer = container.querySelector('aside')
+    expect(drawer).toHaveClass('translate-x-0')
+
+    // Click backdrop
+    const backdrop = container.querySelector('.fixed.inset-0.bg-black\\/50')
+    expect(backdrop).toBeInTheDocument()
+    await user.click(backdrop)
+
+    // Drawer should be closed
+    expect(drawer).toHaveClass('-translate-x-full')
+  })
+
+  it('pressing Escape key closes the drawer when open', async () => {
+    const user = userEvent.setup()
+
+    vi.spyOn(usePostmortemsModule, 'usePostmortems').mockReturnValue({
+      postmortems: [],
+      loading: false,
+      error: null,
+      refetch: vi.fn(),
+    })
+
+    vi.spyOn(usePostmortemModule, 'usePostmortem').mockReturnValue({
+      postmortem: null,
+      loading: false,
+      error: null,
+      refetch: vi.fn(),
+    })
+
+    const { container } = renderApp()
+
+    // Open drawer
+    const hamburgerButton = screen.getByRole('button', { name: /open incident feed/i })
+    await user.click(hamburgerButton)
+
+    // Drawer is open
+    const drawer = container.querySelector('aside')
+    expect(drawer).toHaveClass('translate-x-0')
+
+    // Press Escape
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    // Drawer should be closed
+    expect(drawer).toHaveClass('-translate-x-full')
+  })
+
+  it('pressing Escape when drawer is closed does nothing / no errors', async () => {
+    vi.spyOn(usePostmortemsModule, 'usePostmortems').mockReturnValue({
+      postmortems: [],
+      loading: false,
+      error: null,
+      refetch: vi.fn(),
+    })
+
+    vi.spyOn(usePostmortemModule, 'usePostmortem').mockReturnValue({
+      postmortem: null,
+      loading: false,
+      error: null,
+      refetch: vi.fn(),
+    })
+
+    const { container } = renderApp()
+
+    // Drawer is initially closed
+    const drawer = container.querySelector('aside')
+    expect(drawer).toHaveClass('-translate-x-full')
+
+    // Press Escape - should not throw error
+    expect(() => {
+      fireEvent.keyDown(document, { key: 'Escape' })
+    }).not.toThrow()
+
+    // Drawer should still be closed
+    expect(drawer).toHaveClass('-translate-x-full')
+  })
+
+  it('backdrop element has aria-hidden="true"', async () => {
+    const user = userEvent.setup()
+
+    vi.spyOn(usePostmortemsModule, 'usePostmortems').mockReturnValue({
+      postmortems: [],
+      loading: false,
+      error: null,
+      refetch: vi.fn(),
+    })
+
+    vi.spyOn(usePostmortemModule, 'usePostmortem').mockReturnValue({
+      postmortem: null,
+      loading: false,
+      error: null,
+      refetch: vi.fn(),
+    })
+
+    const { container } = renderApp()
+
+    // Open drawer to show backdrop
+    const hamburgerButton = screen.getByRole('button', { name: /open incident feed/i })
+    await user.click(hamburgerButton)
+
+    // Find backdrop and verify aria-hidden
+    const backdrop = container.querySelector('.fixed.inset-0.bg-black\\/50')
+    expect(backdrop).toHaveAttribute('aria-hidden', 'true')
+  })
+
+  it('selecting an incident in the feed closes the drawer', async () => {
+    const user = userEvent.setup()
+
+    const postmortems = [
+      { incident_id: '1', service: 'auth-service', title: 'Auth failure', severity: 'HIGH', verified: false },
+    ]
+
+    vi.spyOn(usePostmortemsModule, 'usePostmortems').mockReturnValue({
+      postmortems,
+      loading: false,
+      error: null,
+      refetch: vi.fn(),
+    })
+
+    vi.spyOn(usePostmortemModule, 'usePostmortem').mockReturnValue({
+      postmortem: null,
+      loading: false,
+      error: null,
+      refetch: vi.fn(),
+    })
+
+    const { container } = renderApp()
+
+    // Open drawer
+    const hamburgerButton = screen.getByRole('button', { name: /open incident feed/i })
+    await user.click(hamburgerButton)
+
+    // Drawer is open
+    const drawer = container.querySelector('aside')
+    expect(drawer).toHaveClass('translate-x-0')
+
+    // Click an incident
+    const incidentButton = screen.getByText('Auth failure').closest('button')
+    await user.click(incidentButton)
+
+    // Drawer should be closed
+    expect(drawer).toHaveClass('-translate-x-full')
   })
 })

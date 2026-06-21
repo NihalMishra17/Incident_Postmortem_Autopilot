@@ -46,13 +46,13 @@ describe('BlastRadiusGraph', () => {
     expect(truncatedText.textContent).toBe('very-long-s…')
   })
 
-  it('severity color: CRITICAL -> #B5482F appears in stroke or fill', () => {
+  it('hub circle uses neutral theme color #8C8769', () => {
     const { container } = render(
-      <BlastRadiusGraph affected_services={['service-a']} severity="CRITICAL" />
+      <BlastRadiusGraph affected_services={['service-a']} />
     )
 
     const svg = container.querySelector('svg')
     const serialized = svg.outerHTML
-    expect(serialized).toContain('#B5482F')
+    expect(serialized).toContain('#8C8769')
   })
 })

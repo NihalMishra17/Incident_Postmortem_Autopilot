@@ -12,7 +12,7 @@ export default function FixCandidateList({ fixes = [], selected, onSelect, custo
             type="button"
             onClick={() => onSelect(i)}
             className={[
-              'w-full text-left rounded-card border p-3 transition-colors',
+              'w-full text-left rounded-card border p-3 md:p-4 transition-colors',
               isSelected
                 ? 'border-pm-accent dark:border-pm-accent-dark bg-pm-accent/5'
                 : 'border-pm-border dark:border-pm-border-dark bg-pm-surface dark:bg-pm-surface-dark hover:border-pm-accent/50',
@@ -32,7 +32,7 @@ export default function FixCandidateList({ fixes = [], selected, onSelect, custo
               <span className="text-meta text-pm-muted dark:text-pm-muted-dark shrink-0">{pct}%</span>
             </div>
             {f.reasoning && (
-              <p className="mt-1.5 text-meta text-pm-muted dark:text-pm-muted-dark leading-snug">{f.reasoning}</p>
+              <p className="mt-1.5 text-meta md:text-sm text-pm-muted dark:text-pm-muted-dark leading-snug">{f.reasoning}</p>
             )}
           </button>
         )

@@ -40,7 +40,7 @@ class PostmortemSignature(dspy.Signature):
     correlated_incidents: str = dspy.InputField()
     title: str = dspy.OutputField(desc="Short descriptive incident title")
     root_cause: str = dspy.OutputField(desc="Root cause in 2-3 sentences")
-    timeline: str = dspy.OutputField(desc="Bullet-point incident timeline")
+    timeline: str = dspy.OutputField(desc="Bullet-point incident timeline anchored to the alert timestamp provided in alert_data")
     remediation: str = dspy.OutputField(desc="Steps taken to resolve the incident")
     prevention: str = dspy.OutputField(desc="Recommendations to prevent recurrence")
 
@@ -133,8 +133,9 @@ class PostmortemWriter:
             try:
                 service = str(alert.get("service", ""))[:128]
                 message = str(alert.get("message", ""))[:2048]
+                timestamp = str(alert.get("timestamp", ""))[:32]
                 result = self.predictor(
-                    alert_data=f"service={service} message={message}",
+                    alert_data=f"service={service} timestamp={timestamp} message={message}",
                     blast_radius=", ".join(alert.get("blast_radius", []))[:512],
                     rca_result=str(alert.get("rca_result", ""))[:4096],
                     correlated_incidents=str(alert.get("correlated_incidents", []))[:2048],
