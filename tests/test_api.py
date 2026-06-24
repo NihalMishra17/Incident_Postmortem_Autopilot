@@ -96,8 +96,8 @@ def test_trigger_missing_field(client):
 
 def test_list_postmortems_with_data(client):
     """GET /postmortems should return all stored postmortems."""
-    pm1 = {"incident_id": "pm-1", "title": "Database Outage", "severity": "critical"}
-    pm2 = {"incident_id": "pm-2", "title": "Cache Miss Rate Spike", "severity": "high"}
+    pm1 = {"incident_id": "pm-1", "title": "Database Outage", "severity": "critical", "service": "test-service"}
+    pm2 = {"incident_id": "pm-2", "title": "Cache Miss Rate Spike", "severity": "high", "service": "test-service"}
 
     mock_redis = MagicMock()
     mock_redis.smembers.return_value = {"pm-1", "pm-2"}
@@ -119,6 +119,7 @@ def test_get_postmortem_success(client):
         "incident_id": "pm-123",
         "title": "API Gateway Latency",
         "severity": "critical",
+        "service": "test-service",
         "root_cause": "Connection pool exhausted",
     }
 
@@ -192,6 +193,7 @@ def test_verify_postmortem_happy_path(client):
         "incident_id": "pm-verify-1",
         "title": "Database Connection Pool Exhausted",
         "severity": "critical",
+        "service": "test-service",
         "affected_services": ["auth-service", "user-service"],
         "suggested_fixes": MOCK_SUGGESTED_FIXES,
     }
@@ -280,6 +282,7 @@ def test_verify_postmortem_already_verified(client):
     pm = {
         "incident_id": "pm-already-verified",
         "title": "Cache Outage",
+        "service": "test-service",
         "verified": True,
         "verified_by": "jane.smith@example.com",
         "verified_at": "2026-06-15T10:30:00Z",
@@ -315,6 +318,7 @@ def test_verify_postmortem_missing_title(client):
     pm = {
         "incident_id": "pm-no-title",
         "severity": "critical",
+        "service": "test-service",
         # title is missing
     }
 
@@ -341,6 +345,7 @@ def test_verify_postmortem_empty_title(client):
         "incident_id": "pm-empty-title",
         "title": "",
         "severity": "critical",
+        "service": "test-service",
     }
 
     mock_redis = MagicMock()
@@ -385,6 +390,7 @@ def test_verify_postmortem_redis_error_on_set(client):
         "incident_id": "pm-redis-set-fail",
         "title": "Service Outage",
         "severity": "critical",
+        "service": "test-service",
         "affected_services": ["payment-service"],
         "suggested_fixes": MOCK_SUGGESTED_FIXES,
     }
@@ -429,6 +435,7 @@ def test_verify_postmortem_weaviate_insert_fails(client):
         "incident_id": "pm-weaviate-fail",
         "title": "API Gateway Down",
         "severity": "critical",
+        "service": "test-service",
         "affected_services": ["gateway"],
         "suggested_fixes": MOCK_SUGGESTED_FIXES,
     }
@@ -544,6 +551,7 @@ def test_verify_postmortem_affected_services_string(client):
         "incident_id": "pm-service-string",
         "title": "Redis Cluster Failover",
         "severity": "high",
+        "service": "test-service",
         "affected_services": "cache-service",  # string instead of list
         "suggested_fixes": MOCK_SUGGESTED_FIXES,
     }
@@ -587,6 +595,7 @@ def test_verify_postmortem_affected_services_empty_list(client):
         "incident_id": "pm-service-empty",
         "title": "Network Latency Spike",
         "severity": "medium",
+        "service": "test-service",
         "affected_services": [],
         "suggested_fixes": MOCK_SUGGESTED_FIXES,
     }
@@ -630,6 +639,7 @@ def test_verify_postmortem_affected_services_missing(client):
         "incident_id": "pm-service-missing",
         "title": "Disk Space Full",
         "severity": "critical",
+        "service": "test-service",
         # affected_services field is missing
         "suggested_fixes": MOCK_SUGGESTED_FIXES,
     }
@@ -678,6 +688,7 @@ def test_verify_postmortem_selected_fix_index_0(client):
         "incident_id": "pm-ranked-0",
         "title": "Connection Pool Exhausted",
         "severity": "critical",
+        "service": "test-service",
         "affected_services": ["payments"],
         "suggested_fixes": MOCK_SUGGESTED_FIXES,
     }
@@ -723,6 +734,7 @@ def test_verify_postmortem_selected_fix_index_2(client):
         "incident_id": "pm-ranked-2",
         "title": "Bad Config Pushed",
         "severity": "high",
+        "service": "test-service",
         "affected_services": ["api-gateway"],
         "suggested_fixes": MOCK_SUGGESTED_FIXES,
     }
@@ -767,6 +779,7 @@ def test_verify_postmortem_custom_fix(client):
         "incident_id": "pm-custom",
         "title": "Custom Fix Scenario",
         "severity": "medium",
+        "service": "test-service",
         "affected_services": ["custom-service"],
         "suggested_fixes": MOCK_SUGGESTED_FIXES,
     }
@@ -811,6 +824,7 @@ def test_verify_postmortem_confirmed_fix_alias(client):
         "incident_id": "pm-legacy",
         "title": "Legacy Fix Field",
         "severity": "low",
+        "service": "test-service",
         "affected_services": ["legacy"],
         "suggested_fixes": MOCK_SUGGESTED_FIXES,
     }
@@ -916,6 +930,7 @@ def test_verify_postmortem_index_out_of_bounds_runtime(client):
         "incident_id": "pm-short-fixes",
         "title": "Short Fixes List",
         "severity": "medium",
+        "service": "test-service",
         "affected_services": ["test"],
         "suggested_fixes": [MOCK_SUGGESTED_FIXES[0]],  # Only 1 fix
     }
@@ -943,6 +958,7 @@ def test_verify_postmortem_missing_suggested_fixes(client):
         "incident_id": "pm-old-format",
         "title": "Old Format Postmortem",
         "severity": "high",
+        "service": "test-service",
         "affected_services": ["old"],
         # No suggested_fixes field
     }
@@ -970,6 +986,7 @@ def test_verify_postmortem_empty_suggested_fixes(client):
         "incident_id": "pm-empty-fixes",
         "title": "Empty Fixes Postmortem",
         "severity": "medium",
+        "service": "test-service",
         "affected_services": ["test"],
         "suggested_fixes": [],
     }
@@ -997,6 +1014,7 @@ def test_verify_weaviate_upsert_uses_final_fix(client):
         "incident_id": "pm-weaviate-check",
         "title": "Weaviate Fix Check",
         "severity": "critical",
+        "service": "test-service",
         "affected_services": ["auth"],
         "suggested_fixes": MOCK_SUGGESTED_FIXES,
     }

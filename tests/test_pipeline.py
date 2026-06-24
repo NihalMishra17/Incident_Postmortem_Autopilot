@@ -85,7 +85,7 @@ def test_process_batches_calls_triage_per_alert():
     # Set up return values
     triage.process.side_effect = lambda a: {**a, "severity_level": "critical"}
     correlation.process_batch.side_effect = lambda alerts: [{**a, "correlated_incidents": []} for a in alerts]
-    rca.process_batch.side_effect = lambda alerts: [{**a, "rca_result": "RCA"} for a in alerts]
+    rca.process_batch.side_effect = lambda alerts, logs_by_alert_id=None: [{**a, "rca_result": "RCA"} for a in alerts]
     writer.process_batch.return_value = []
 
     batches = {
@@ -112,7 +112,7 @@ def test_process_batches_calls_batch_methods_once():
     # Set up return values
     triage.process.side_effect = lambda a: {**a, "severity_level": "critical"}
     correlation.process_batch.side_effect = lambda alerts: [{**a, "correlated_incidents": []} for a in alerts]
-    rca.process_batch.side_effect = lambda alerts: [{**a, "rca_result": "RCA"} for a in alerts]
+    rca.process_batch.side_effect = lambda alerts, logs_by_alert_id=None: [{**a, "rca_result": "RCA"} for a in alerts]
     writer.process_batch.return_value = []
 
     batches = {
@@ -169,7 +169,7 @@ def test_process_batches_continues_on_error():
         return [{**a, "correlated_incidents": []} for a in alerts]
 
     correlation.process_batch.side_effect = correlation_side_effect
-    rca.process_batch.side_effect = lambda alerts: [{**a, "rca_result": "RCA"} for a in alerts]
+    rca.process_batch.side_effect = lambda alerts, logs_by_alert_id=None: [{**a, "rca_result": "RCA"} for a in alerts]
     writer.process_batch.return_value = []
 
     batches = {
@@ -220,7 +220,7 @@ def test_process_batches_enriches_alerts_through_pipeline():
     # Each agent adds a field
     triage.process.side_effect = lambda a: {**a, "severity_level": "critical", "blast_radius": ["service-b"]}
     correlation.process_batch.side_effect = lambda alerts: [{**a, "correlated_incidents": [{"title": "Past incident"}]} for a in alerts]
-    rca.process_batch.side_effect = lambda alerts: [{**a, "rca_result": "Root cause analysis"} for a in alerts]
+    rca.process_batch.side_effect = lambda alerts, logs_by_alert_id=None: [{**a, "rca_result": "Root cause analysis"} for a in alerts]
     writer.process_batch.return_value = [
         {
             "incident_id": "1",
@@ -259,7 +259,7 @@ def test_process_batches_handles_multiple_services():
 
     triage.process.side_effect = lambda a: {**a, "severity_level": "critical"}
     correlation.process_batch.side_effect = lambda alerts: [{**a, "correlated_incidents": []} for a in alerts]
-    rca.process_batch.side_effect = lambda alerts: [{**a, "rca_result": "RCA"} for a in alerts]
+    rca.process_batch.side_effect = lambda alerts, logs_by_alert_id=None: [{**a, "rca_result": "RCA"} for a in alerts]
     writer.process_batch.return_value = []
 
     batches = {
@@ -314,3 +314,58 @@ def test_run_clears_shutdown_event_on_start(
     run()
 
     mock_event.clear.assert_called_once()
+
+
+def test_alert_batcher_log_buffer():
+    """Should store logs by alert_id and return correct mapping via get_logs_for_alerts."""
+    batcher = AlertBatcher(max_per_service=100)
+
+    # Add logs for different alert IDs
+    log1 = {"alert_id": "alert-1", "timestamp": "2026-06-24T10:00:00Z", "message": "Error 1"}
+    log2 = {"alert_id": "alert-1", "timestamp": "2026-06-24T10:00:01Z", "message": "Error 2"}
+    log3 = {"alert_id": "alert-2", "timestamp": "2026-06-24T10:00:02Z", "message": "Error 3"}
+
+    batcher.add_log(log1)
+    batcher.add_log(log2)
+    batcher.add_log(log3)
+
+    # Create alerts
+    alerts = [
+        {"alert_id": "alert-1", "service": "api-gateway"},
+        {"alert_id": "alert-2", "service": "database"},
+    ]
+
+    # Get logs for alerts
+    logs_by_id = batcher.get_logs_for_alerts(alerts)
+
+    assert "alert-1" in logs_by_id
+    assert "alert-2" in logs_by_id
+    assert len(logs_by_id["alert-1"]) == 2
+    assert len(logs_by_id["alert-2"]) == 1
+    assert logs_by_id["alert-1"][0]["message"] == "Error 1"
+    assert logs_by_id["alert-1"][1]["message"] == "Error 2"
+    assert logs_by_id["alert-2"][0]["message"] == "Error 3"
+
+
+def test_alert_batcher_log_buffer_caps_at_1000_keys():
+    """Should cap log buffer at 1000 keys by evicting oldest when full."""
+    batcher = AlertBatcher(max_per_service=100)
+
+    # Add 1000 logs with unique alert IDs
+    for i in range(1000):
+        batcher.add_log({"alert_id": f"alert-{i}", "message": f"Log {i}"})
+
+    # Buffer should be full
+    assert len(batcher.log_buffer) == 1000
+
+    # Add one more log with a new alert_id
+    batcher.add_log({"alert_id": "alert-1000", "message": "Log 1000"})
+
+    # Buffer should still be 1000 (oldest evicted)
+    assert len(batcher.log_buffer) == 1000
+
+    # First alert should have been evicted
+    assert "alert-0" not in batcher.log_buffer
+
+    # New alert should be present
+    assert "alert-1000" in batcher.log_buffer

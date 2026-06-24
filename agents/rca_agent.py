@@ -32,15 +32,24 @@ class RCAAgent:
     def __init__(self):
         self.module = RCAModule()
 
-    def process_batch(self, alerts: list[dict]) -> list[dict]:
+    def process_batch(self, alerts: list[dict], logs_by_alert_id: dict | None = None) -> list[dict]:
         """Run DSPy ChainOfThought RCA individually per alert, truncating inputs to manage token limits."""
         results = []
         for alert in alerts:
             try:
                 service = str(alert.get("service", ""))[:128]
                 message = str(alert.get("message", ""))[:2048]
+                logs = (logs_by_alert_id or {}).get(alert.get("alert_id"), [])[:15]
+                log_text = ""
+                if logs:
+                    lines = "\n".join(
+                        f"[{log.get('timestamp', '')}] {log.get('level', 'INFO')} {log.get('message', '')}"
+                        for log in logs
+                    )
+                    log_text = f"\nLogs:\n{lines}"
+                alert_data = f"service={service} message={message}{log_text}"[:3000]
                 result = self.module(
-                    alert_data=f"service={service} message={message}",
+                    alert_data=alert_data,
                     blast_radius=", ".join(alert.get("blast_radius", []))[:512],
                     correlated_incidents=str(alert.get("correlated_incidents", []))[:2048],
                 )
@@ -53,7 +62,7 @@ class RCAAgent:
         return results
 
     def process(self, alert: dict) -> dict:
-        return self.process_batch([alert])[0]
+        return self.process_batch([alert], logs_by_alert_id=None)[0]
 
     def close(self):
         pass

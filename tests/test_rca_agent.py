@@ -143,3 +143,47 @@ def test_process_single_alert_backward_compat(rca_agent):
     assert not isinstance(result, list)
     assert result["alert_id"] == "123"
     assert "rca_result" in result
+
+
+def test_process_batch_with_logs_truncation(rca_agent):
+    """Should verify logs are truncated to 15 entries and formatted in alert_data."""
+    mock_result = MagicMock()
+    mock_result.root_cause_analysis = "Analysis result"
+    rca_agent.module.return_value = mock_result
+
+    # Create 20 logs to test truncation at 15
+    logs = [
+        {
+            "timestamp": f"2026-06-24T10:00:{i:02d}Z",
+            "level": "ERROR",
+            "message": f"Log message {i}"
+        }
+        for i in range(20)
+    ]
+
+    alert = {
+        "alert_id": "test-id",
+        "service": "api-gateway",
+        "message": "high latency",
+        "blast_radius": ["payment-service"],
+        "correlated_incidents": [],
+    }
+
+    result = rca_agent.process_batch([alert], logs_by_alert_id={"test-id": logs})
+
+    # Verify module was called
+    rca_agent.module.assert_called_once()
+    call_kwargs = rca_agent.module.call_args[1]
+    alert_data = call_kwargs["alert_data"]
+
+    # Verify logs section exists
+    assert "\nLogs:\n" in alert_data
+
+    # Verify first 15 logs are included
+    for i in range(15):
+        assert f"Log message {i}" in alert_data
+
+    # Verify 16th log is NOT included (truncated)
+    assert "Log message 15" not in alert_data
+    assert "Log message 16" not in alert_data
+    assert "Log message 19" not in alert_data

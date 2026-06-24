@@ -79,7 +79,7 @@ export default function PostmortemDetail({ incidentId }) {
           <div className="flex items-center gap-2 mb-1">
             <span className={`w-2 h-2 rounded-full shrink-0 ${dotClass}`} />
             <span className={`text-label font-medium ${labelClass}`}>{postmortem.severity}</span>
-            <span className="text-meta text-pm-muted dark:text-pm-muted-dark">· {postmortem.service}</span>
+            <span className="text-meta text-pm-muted dark:text-pm-muted-dark">· {postmortem.service || 'unknown service'}</span>
           </div>
           <h1 className="text-[17px] md:text-[19px] font-semibold text-pm-text dark:text-pm-text-dark leading-snug">
             {postmortem.title}
