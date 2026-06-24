@@ -67,7 +67,7 @@ export default function VerifyPanel({ postmortem, onVerified }) {
     }
 
     try {
-      const res = await fetch(`/postmortems/${postmortem.id}/verify`, {
+      const res = await fetch(`/postmortems/${postmortem.incident_id}/verify`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),

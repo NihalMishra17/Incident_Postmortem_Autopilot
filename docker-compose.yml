@@ -11,7 +11,7 @@ services:
       ZOOKEEPER_TICK_TIME: 2000
     volumes:
       - zookeeper_data:/var/lib/zookeeper/data
-      - zookeeper_data:/var/lib/zookeeper/log
+      - zookeeper_log:/var/lib/zookeeper/log
     networks:
       - incident-net
     healthcheck:
@@ -109,6 +109,7 @@ networks:
 
 volumes:
   zookeeper_data:
+  zookeeper_log:
   kafka_data:
   weaviate_data:
   neo4j_data:

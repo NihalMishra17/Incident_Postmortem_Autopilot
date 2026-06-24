@@ -10,7 +10,7 @@ describe('VerifyPanel', () => {
 
   it('renders form with root_cause textarea and verified_by input', () => {
     const postmortem = {
-      id: '1',
+      incident_id: '1',
       root_cause: 'Initial cause',
       verified: false,
     }
@@ -23,7 +23,7 @@ describe('VerifyPanel', () => {
 
   it('with suggested_fixes -> FixCandidateList shown', () => {
     const postmortem = {
-      id: '1',
+      incident_id: '1',
       root_cause: 'Initial cause',
       verified: false,
       suggested_fixes: [
@@ -39,7 +39,7 @@ describe('VerifyPanel', () => {
 
   it('without suggested_fixes (empty/undefined) -> standalone custom textarea, no FixCandidateList', () => {
     const postmortem = {
-      id: '1',
+      incident_id: '1',
       root_cause: 'Initial cause',
       verified: false,
     }
@@ -52,7 +52,7 @@ describe('VerifyPanel', () => {
 
   it('already verified (postmortem.verified=true) -> form hidden, verified info shown', () => {
     const postmortem = {
-      id: '1',
+      incident_id: '1',
       verified: true,
       verified_by: 'alice@example.com',
       confirmed_root_cause: 'Database overload',
@@ -75,7 +75,7 @@ describe('VerifyPanel', () => {
     const user = userEvent.setup()
     const onVerified = vi.fn()
     const postmortem = {
-      id: '1',
+      incident_id: '1',
       root_cause: 'Initial cause',
       verified: false,
       suggested_fixes: [
@@ -126,7 +126,7 @@ describe('VerifyPanel', () => {
     const user = userEvent.setup()
     const onVerified = vi.fn()
     const postmortem = {
-      id: '1',
+      incident_id: '1',
       root_cause: 'Initial cause',
       verified: false,
       suggested_fixes: [
@@ -175,7 +175,7 @@ describe('VerifyPanel', () => {
   it('validation: missing required field -> error message shown, no PATCH called', async () => {
     const user = userEvent.setup()
     const postmortem = {
-      id: '1',
+      incident_id: '1',
       root_cause: '',
       verified: false,
     }
@@ -195,7 +195,7 @@ describe('VerifyPanel', () => {
   it('API error -> error message shown', async () => {
     const user = userEvent.setup()
     const postmortem = {
-      id: '1',
+      incident_id: '1',
       root_cause: 'Initial cause',
       verified: false,
     }
@@ -223,7 +223,7 @@ describe('VerifyPanel', () => {
     const user = userEvent.setup()
     const onVerified = vi.fn()
     const postmortem = {
-      id: '1',
+      incident_id: '1',
       root_cause: 'Initial cause',
       verified: false,
     }
@@ -249,7 +249,7 @@ describe('VerifyPanel', () => {
   it('loading state -> button disabled during fetch', async () => {
     const user = userEvent.setup()
     const postmortem = {
-      id: '1',
+      incident_id: '1',
       root_cause: 'Initial cause',
       verified: false,
     }
