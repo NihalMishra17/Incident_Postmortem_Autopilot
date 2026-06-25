@@ -159,7 +159,7 @@ class PostmortemWriter:
                     "incident_id": alert.get("alert_id", str(uuid.uuid4())),
                     "title": required_fields["title"],
                     "severity": alert.get("severity_level", "unknown"),
-                    "service": alert.get("service", "unknown"),
+                    "service": alert.get("service") or (alert.get("blast_radius") or [""])[0] or "unknown",
                     "affected_services": alert.get("blast_radius", []),
                     "root_cause": required_fields["root_cause"],
                     "timeline": required_fields["timeline"],
