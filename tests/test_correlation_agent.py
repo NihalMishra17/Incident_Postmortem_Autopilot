@@ -157,3 +157,135 @@ def test_process_single_alert_backward_compat(correlation_agent):
     assert not isinstance(result, list)
     assert result["alert_id"] == "123"
     assert "correlated_incidents" in result
+
+
+def test_dedup_removes_exact_duplicate_fix(mock_weaviate_client):
+    """Should remove exact duplicate fix text and return only 3 unique results."""
+    mock_genai_client = MagicMock()
+    mock_collection = MagicMock()
+    mock_weaviate_client.collections.get.return_value = mock_collection
+
+    with patch("agents.correlation_agent.genai.Client", return_value=mock_genai_client):
+        with patch("agents.correlation_agent.get_client", return_value=mock_weaviate_client):
+            agent = CorrelationAgent()
+
+    incidents = [
+        {"title": "Incident 1", "fix": "Increased pool size from 10 to 50"},
+        {"title": "Incident 2", "fix": "Added connection timeout logic"},
+        {"title": "Incident 3", "fix": "Increased pool size from 10 to 50"},  # duplicate
+        {"title": "Incident 4", "fix": "Configured retry backoff"},
+    ]
+
+    result = agent._deduplicate_fixes(incidents)
+
+    assert len(result) == 3
+    # First unique instance kept
+    assert result[0]["title"] == "Incident 1"
+    assert result[1]["title"] == "Incident 2"
+    # Incident 3 skipped (duplicate of Incident 1)
+    assert result[2]["title"] == "Incident 4"
+
+
+def test_dedup_removes_near_duplicate_fix(mock_weaviate_client):
+    """Should remove fixes with >85% Jaccard similarity and return 3 unique results."""
+    mock_genai_client = MagicMock()
+    mock_collection = MagicMock()
+    mock_weaviate_client.collections.get.return_value = mock_collection
+
+    with patch("agents.correlation_agent.genai.Client", return_value=mock_genai_client):
+        with patch("agents.correlation_agent.get_client", return_value=mock_weaviate_client):
+            agent = CorrelationAgent()
+
+    incidents = [
+        {"title": "Inc1", "fix": "increased pool size timeout logic cache retry"},
+        {"title": "Inc2", "fix": "Configured rate limiting"},
+        {"title": "Inc3", "fix": "increased pool size timeout logic cache"},  # >85% similar to Inc1
+        {"title": "Inc4", "fix": "Implemented circuit breaker pattern"},
+    ]
+    result = agent._deduplicate_fixes(incidents)
+
+    assert len(result) == 3
+    assert result[0]["title"] == "Inc1"
+    assert result[1]["title"] == "Inc2"
+    # Inc3 skipped (near duplicate of Inc1)
+    assert result[2]["title"] == "Inc4"
+
+
+def test_dedup_no_duplicates(mock_weaviate_client):
+    """Should return all 3 incidents when fixes are completely different."""
+    mock_genai_client = MagicMock()
+    mock_collection = MagicMock()
+    mock_weaviate_client.collections.get.return_value = mock_collection
+
+    with patch("agents.correlation_agent.genai.Client", return_value=mock_genai_client):
+        with patch("agents.correlation_agent.get_client", return_value=mock_weaviate_client):
+            agent = CorrelationAgent()
+
+    incidents = [
+        {"title": "Inc1", "fix": "Increased pool size"},
+        {"title": "Inc2", "fix": "Added circuit breaker"},
+        {"title": "Inc3", "fix": "Configured rate limiting"},
+    ]
+
+    result = agent._deduplicate_fixes(incidents)
+
+    assert len(result) == 3
+    assert result[0]["title"] == "Inc1"
+    assert result[1]["title"] == "Inc2"
+    assert result[2]["title"] == "Inc3"
+
+
+def test_dedup_returns_fewer_than_3_when_not_enough_unique(mock_weaviate_client):
+    """Should return only 2 results when 10 incidents have only 2 unique fixes."""
+    mock_genai_client = MagicMock()
+    mock_collection = MagicMock()
+    mock_weaviate_client.collections.get.return_value = mock_collection
+
+    with patch("agents.correlation_agent.genai.Client", return_value=mock_genai_client):
+        with patch("agents.correlation_agent.get_client", return_value=mock_weaviate_client):
+            agent = CorrelationAgent()
+
+    incidents = [
+        {"title": "Inc1", "fix": "Increased connection pool size"},
+        {"title": "Inc2", "fix": "Added LRU cache with TTL"},
+        {"title": "Inc3", "fix": "Increased connection pool size"},  # duplicate
+        {"title": "Inc4", "fix": "Added LRU cache with TTL"},  # duplicate
+        {"title": "Inc5", "fix": "Increased connection pool size"},  # duplicate
+        {"title": "Inc6", "fix": "Added LRU cache with TTL"},  # duplicate
+        {"title": "Inc7", "fix": "Increased connection pool size"},  # duplicate
+        {"title": "Inc8", "fix": "Added LRU cache with TTL"},  # duplicate
+        {"title": "Inc9", "fix": "Increased connection pool size"},  # duplicate
+        {"title": "Inc10", "fix": "Added LRU cache with TTL"},  # duplicate
+    ]
+
+    result = agent._deduplicate_fixes(incidents)
+
+    assert len(result) == 2
+    assert result[0]["fix"] == "Increased connection pool size"
+    assert result[1]["fix"] == "Added LRU cache with TTL"
+
+
+def test_dedup_handles_empty_fix(mock_weaviate_client):
+    """Should handle empty string fix without crashing; empty strings deduplicate."""
+    mock_genai_client = MagicMock()
+    mock_collection = MagicMock()
+    mock_weaviate_client.collections.get.return_value = mock_collection
+
+    with patch("agents.correlation_agent.genai.Client", return_value=mock_genai_client):
+        with patch("agents.correlation_agent.get_client", return_value=mock_weaviate_client):
+            agent = CorrelationAgent()
+
+    incidents = [
+        {"title": "Inc1", "fix": ""},
+        {"title": "Inc2", "fix": "Added connection timeout"},
+        {"title": "Inc3", "fix": ""},  # duplicate empty
+        {"title": "Inc4", "fix": "Configured retry logic"},
+    ]
+
+    result = agent._deduplicate_fixes(incidents)
+
+    assert len(result) == 3
+    assert result[0]["fix"] == ""
+    assert result[1]["fix"] == "Added connection timeout"
+    # Inc3 skipped (duplicate empty)
+    assert result[2]["fix"] == "Configured retry logic"

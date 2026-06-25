@@ -194,7 +194,11 @@ incident_postmortem/
 │   └── incident_simulator.py       # Kafka alert producer for local testing
 │
 ├── data/
+│   ├── past_incidents.json         # Curated seed incidents (single source of truth)
 │   └── seed_weaviate.py            # Seeds 5 historical incidents into Weaviate with embeddings
+│
+├── scripts/
+│   └── clean_weaviate.py           # Weaviate maintenance CLI (list / delete / wipe-and-reseed)
 │
 ├── frontend/                       # React UI
 │   ├── src/
@@ -299,6 +303,24 @@ PYTHONPATH=. python data/seed_weaviate.py
 ```
 
 Both scripts are idempotent — safe to re-run.
+
+#### Weaviate maintenance
+
+`scripts/clean_weaviate.py` lets you inspect and repair the `PastIncident` collection without touching Docker volumes:
+
+```bash
+# List all entries (UUID + title + fix preview)
+PYTHONPATH=. python scripts/clean_weaviate.py --list
+
+# Delete specific entries by UUID
+PYTHONPATH=. python scripts/clean_weaviate.py --delete <uuid1> <uuid2>
+
+# Wipe the collection and reseed from data/past_incidents.json
+# ⚠️  Destructive — prompts for confirmation. Requires GEMINI_API_KEY.
+PYTHONPATH=. python scripts/clean_weaviate.py --wipe-and-reseed
+```
+
+The curated seed data lives in `data/past_incidents.json`. Edit that file to change what gets seeded; both `seed_weaviate.py` and `clean_weaviate.py` read from it.
 
 ### 6. Start the agent pipeline
 

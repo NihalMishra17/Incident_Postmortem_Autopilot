@@ -44,16 +44,47 @@ class CorrelationAgent:
         )
         return result.embeddings[0].values
 
+    def _normalize_fix(self, fix: str) -> str:
+        """Lowercase and collapse whitespace for case-insensitive fix deduplication."""
+        return " ".join(fix.lower().split())
+
+    def _jaccard(self, a: str, b: str) -> float:
+        """Compute Jaccard similarity between two whitespace-split token sets."""
+        sa, sb = set(a.split()), set(b.split())
+        if not sa and not sb:
+            return 1.0
+        return len(sa & sb) / len(sa | sb)
+
+    def _deduplicate_fixes(self, incidents: list[dict], threshold: float = 0.85) -> list[dict]:
+        """Remove semantically similar fixes (exact then Jaccard), return up to 3 unique incidents."""
+        seen_normalized: list[str] = []
+        unique: list[dict] = []
+        for inc in incidents:
+            fix = inc.get("fix", "") or ""
+            norm = self._normalize_fix(fix)
+            # Phase 1: exact normalized match
+            if norm in seen_normalized:
+                continue
+            # Phase 2: Jaccard similarity against all seen
+            if any(self._jaccard(norm, s) >= threshold for s in seen_normalized):
+                continue
+            seen_normalized.append(norm)
+            unique.append(inc)
+            if len(unique) == 3:
+                break
+        return unique
+
     def _find_similar(self, query: str) -> list[dict]:
         """Embed alert text using Gemini and query Weaviate for top-3 similar past incidents."""
         try:
             vector = self._embed_query(query)
             response = self.collection.query.near_vector(
                 near_vector=vector,
-                limit=3,
+                limit=10,
                 return_properties=["title", "root_cause", "fix", "service"],
             )
-            return [obj.properties for obj in response.objects]
+            results = [obj.properties for obj in response.objects]
+            return self._deduplicate_fixes(results)
         except Exception as e:
             logger.warning("Correlation query failed: %s", e)
             return []
