@@ -1,6 +1,7 @@
 """FastAPI service for triggering incident analysis and retrieving postmortems."""
 from dotenv import load_dotenv
-load_dotenv()
+from pathlib import Path
+load_dotenv(Path(__file__).parent.parent / ".env")
 import logging_config
 import json
 import logging

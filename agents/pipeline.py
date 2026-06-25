@@ -4,7 +4,8 @@ Alerts are accumulated in a tumbling window (default 30 seconds) per service bef
 Run as: python -m agents.pipeline with WINDOW_SIZE_SECONDS and MAX_ALERTS_PER_WINDOW_PER_SERVICE env vars.
 """
 from dotenv import load_dotenv
-load_dotenv()
+from pathlib import Path
+load_dotenv(Path(__file__).parent.parent / ".env")
 import logging_config
 import json
 import logging

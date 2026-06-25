@@ -1,6 +1,7 @@
 """Generates synthetic incidents and logs to Kafka for testing the postmortem pipeline."""
 from dotenv import load_dotenv
-load_dotenv()
+from pathlib import Path
+load_dotenv(Path(__file__).parent.parent / ".env")
 import argparse
 import random
 import signal
