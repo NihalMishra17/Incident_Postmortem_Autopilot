@@ -102,7 +102,7 @@ class VerifyRequest(BaseModel):
     """Request payload for verifying postmortem root cause and engineer-selected fix.
 
     Accepts human-verified root cause and one of three mutually-exclusive fix selection modes:
-    - `selected_fix_index` (0, 1, or 2): Use one of the AI-ranked fix suggestions from postmortem.
+    - `selected_fix_index` (any non-negative integer): Use one of the AI-ranked fix suggestions from postmortem; bounds checked at runtime.
     - `custom_fix`: Supply a custom fix not in the ranked suggestions.
     - `confirmed_fix` (deprecated): Legacy alias for `custom_fix`; treated as custom source.
 
@@ -144,8 +144,8 @@ class VerifyRequest(BaseModel):
             raise ValueError("Must provide one of: confirmed_fix, selected_fix_index, or custom_fix")
         if sum(fix_fields) > 1:
             raise ValueError("Cannot provide multiple fix fields; choose one of: confirmed_fix, selected_fix_index, or custom_fix")
-        if self.selected_fix_index is not None and self.selected_fix_index not in {0, 1, 2}:
-            raise ValueError("selected_fix_index must be 0, 1, or 2")
+        if self.selected_fix_index is not None and self.selected_fix_index < 0:
+            raise ValueError("selected_fix_index must be >= 0")
         return self
 
 def _consume_postmortems():

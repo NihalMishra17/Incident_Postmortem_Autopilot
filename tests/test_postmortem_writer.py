@@ -256,7 +256,7 @@ def test_rank_fixes_from_weaviate_success(postmortem_writer, mock_weaviate_clien
 
 
 def test_rank_fixes_from_weaviate_fewer_than_3_results(postmortem_writer, mock_weaviate_client, mock_genai_client):
-    """Test fix ranking pads to 3 results when Weaviate returns fewer."""
+    """Test fix ranking returns exactly the number of unique results without padding."""
     # Mock embedding response
     mock_embed_response = MagicMock()
     mock_embed_response.embeddings = [MagicMock(values=[0.1] * 768)]
@@ -277,32 +277,24 @@ def test_rank_fixes_from_weaviate_fewer_than_3_results(postmortem_writer, mock_w
     root_cause = "Database connection pool exhausted"
     result = postmortem_writer._rank_fixes_from_weaviate(root_cause)
 
-    assert len(result) == 3
+    # Should return exactly 1 result, not padded to 3
+    assert len(result) == 1
     assert result[0].fix == "Increase connection pool size"
     assert result[0].confidence == 0.9
 
-    # Check fallback fixes
-    assert result[1].fix == "Inspect recent deployments and roll back if necessary"
-    assert result[1].confidence == 0.3
-    assert result[1].reasoning == "Generated without historical correlation"
-
-    assert result[2].fix == "Inspect recent deployments and roll back if necessary"
-    assert result[2].confidence == 0.3
-
 
 def test_rank_fixes_from_weaviate_error_fallback(postmortem_writer, mock_weaviate_client, mock_genai_client):
-    """Test fix ranking returns fallback fixes on error."""
+    """Test fix ranking returns single fallback fix on error."""
     # Mock embedding to raise an exception
     mock_genai_client.models.embed_content.side_effect = Exception("API error")
 
     root_cause = "Database connection pool exhausted"
     result = postmortem_writer._rank_fixes_from_weaviate(root_cause)
 
-    assert len(result) == 3
-    for fix_candidate in result:
-        assert fix_candidate.fix == "Inspect recent deployments and roll back if necessary"
-        assert fix_candidate.confidence == 0.3
-        assert fix_candidate.reasoning == "Generated without historical correlation"
+    assert len(result) == 1
+    assert result[0].fix == "Inspect recent deployments and roll back if necessary"
+    assert result[0].confidence == 0.3
+    assert result[0].reasoning == "Generated without historical correlation"
 
 
 def test_rank_fixes_confidence_bounds(postmortem_writer, mock_weaviate_client, mock_genai_client):
@@ -448,3 +440,196 @@ def test_process_single_alert_backward_compat(postmortem_writer, mock_kafka_prod
     assert not isinstance(result, list)
     assert result["incident_id"] == "123"
     assert result["title"] == "Test Incident"
+
+
+def test_rank_fixes_dedup_exact_match(postmortem_writer, mock_weaviate_client, mock_genai_client):
+    """Test deduplication removes exact normalized matches."""
+    # Mock embedding response
+    mock_embed_response = MagicMock()
+    mock_embed_response.embeddings = [MagicMock(values=[0.1] * 768)]
+    mock_genai_client.models.embed_content.return_value = mock_embed_response
+
+    # Mock 10 results where 2 have identical normalized fix text
+    mock_objects = []
+    for i in range(10):
+        mock_obj = MagicMock()
+        mock_obj.metadata.distance = 0.1 * i
+        if i == 3:
+            # Duplicate with same normalized fix as i=1 (different case/whitespace)
+            mock_obj.properties = {
+                "fix": "  INCREASE   CONNECTION   POOL  ",
+                "title": f"Incident {i}",
+                "root_cause": f"Cause {i}"
+            }
+        elif i == 1:
+            mock_obj.properties = {
+                "fix": "increase connection pool",
+                "title": f"Incident {i}",
+                "root_cause": f"Cause {i}"
+            }
+        else:
+            mock_obj.properties = {
+                "fix": f"Fix number {i}",
+                "title": f"Incident {i}",
+                "root_cause": f"Cause {i}"
+            }
+        mock_objects.append(mock_obj)
+
+    mock_collection = postmortem_writer.weaviate_collection
+    mock_collection.query.near_vector.return_value.objects = mock_objects
+
+    result = postmortem_writer._rank_fixes_from_weaviate("test root cause")
+
+    # Should have fewer entries than 10 due to deduplication
+    assert len(result) <= 3
+    # Should have removed one of the duplicates
+    fix_texts = [r.fix for r in result]
+    normalized_fixes = [" ".join(f.lower().split()) for f in fix_texts]
+    # All normalized fixes should be unique
+    assert len(normalized_fixes) == len(set(normalized_fixes))
+
+
+def test_rank_fixes_dedup_high_jaccard(postmortem_writer, mock_weaviate_client, mock_genai_client):
+    """Test deduplication removes fixes with Jaccard similarity >= 0.85."""
+    # Mock embedding response
+    mock_embed_response = MagicMock()
+    mock_embed_response.embeddings = [MagicMock(values=[0.1] * 768)]
+    mock_genai_client.models.embed_content.return_value = mock_embed_response
+
+    # Mock 2 results with high Jaccard similarity (>= 0.85)
+    # To achieve Jaccard >= 0.85, need intersection/union >= 0.85
+    # If string 1 has 7 tokens and string 2 has 6 of those same tokens + 0 new = 6/7 = 0.857
+    # String 1: "restart the service and clear the cache" = 7 tokens
+    # String 2: "restart service and clear the cache" = 6 tokens (missing "the")
+    # Intersection = 6, Union = 7, Jaccard = 6/7 = 0.857
+    mock_obj1 = MagicMock()
+    mock_obj1.metadata.distance = 0.1
+    mock_obj1.properties = {
+        "fix": "restart the service and clear the cache",
+        "title": "Incident 1",
+        "root_cause": "Cause 1"
+    }
+
+    mock_obj2 = MagicMock()
+    mock_obj2.metadata.distance = 0.15
+    mock_obj2.properties = {
+        "fix": "restart service and clear the cache",
+        "title": "Incident 2",
+        "root_cause": "Cause 2"
+    }
+
+    mock_collection = postmortem_writer.weaviate_collection
+    mock_collection.query.near_vector.return_value.objects = [mock_obj1, mock_obj2]
+
+    result = postmortem_writer._rank_fixes_from_weaviate("test root cause")
+
+    # Should deduplicate to 1 since Jaccard similarity is high (6/7 = 0.857)
+    assert len(result) == 1
+
+
+def test_rank_fixes_dedup_mixed(postmortem_writer, mock_weaviate_client, mock_genai_client):
+    """Test deduplication with mix of duplicates and unique fixes."""
+    # Mock embedding response
+    mock_embed_response = MagicMock()
+    mock_embed_response.embeddings = [MagicMock(values=[0.1] * 768)]
+    mock_genai_client.models.embed_content.return_value = mock_embed_response
+
+    # Mock 10 results: 3 duplicates + 7 unique
+    mock_objects = []
+    # First 3 are duplicates
+    for i in range(3):
+        mock_obj = MagicMock()
+        mock_obj.metadata.distance = 0.1 + i * 0.01
+        mock_obj.properties = {
+            "fix": "restart the service",
+            "title": f"Incident {i}",
+            "root_cause": f"Cause {i}"
+        }
+        mock_objects.append(mock_obj)
+
+    # Next 7 are unique
+    for i in range(3, 10):
+        mock_obj = MagicMock()
+        mock_obj.metadata.distance = 0.2 + i * 0.05
+        mock_obj.properties = {
+            "fix": f"Unique fix number {i}",
+            "title": f"Incident {i}",
+            "root_cause": f"Cause {i}"
+        }
+        mock_objects.append(mock_obj)
+
+    mock_collection = postmortem_writer.weaviate_collection
+    mock_collection.query.near_vector.return_value.objects = mock_objects
+
+    result = postmortem_writer._rank_fixes_from_weaviate("test root cause")
+
+    # Should return exactly 3 unique fixes
+    assert len(result) == 3
+    # First should be "restart the service" (best distance among duplicates)
+    assert result[0].fix == "restart the service"
+    # Rest should be from the unique fixes
+    assert all("Unique fix" in r.fix for r in result[1:])
+
+
+def test_rank_fixes_dedup_all_identical(postmortem_writer, mock_weaviate_client, mock_genai_client):
+    """Test deduplication when all results are identical."""
+    # Mock embedding response
+    mock_embed_response = MagicMock()
+    mock_embed_response.embeddings = [MagicMock(values=[0.1] * 768)]
+    mock_genai_client.models.embed_content.return_value = mock_embed_response
+
+    # Mock 10 identical results
+    mock_objects = []
+    for i in range(10):
+        mock_obj = MagicMock()
+        mock_obj.metadata.distance = 0.1 + i * 0.01
+        mock_obj.properties = {
+            "fix": "check system logs",
+            "title": f"Incident {i}",
+            "root_cause": f"Cause {i}"
+        }
+        mock_objects.append(mock_obj)
+
+    mock_collection = postmortem_writer.weaviate_collection
+    mock_collection.query.near_vector.return_value.objects = mock_objects
+
+    result = postmortem_writer._rank_fixes_from_weaviate("test root cause")
+
+    # Should only return 1 since all are identical
+    assert len(result) == 1
+    assert result[0].fix == "check system logs"
+
+
+def test_rank_fixes_dedup_no_padding(postmortem_writer, mock_weaviate_client, mock_genai_client):
+    """Test that deduplication returns exactly the unique count without padding."""
+    # Mock embedding response
+    mock_embed_response = MagicMock()
+    mock_embed_response.embeddings = [MagicMock(values=[0.1] * 768)]
+    mock_genai_client.models.embed_content.return_value = mock_embed_response
+
+    # Mock only 2 unique results
+    mock_obj1 = MagicMock()
+    mock_obj1.metadata.distance = 0.1
+    mock_obj1.properties = {
+        "fix": "Increase timeout configuration",
+        "title": "Incident 1",
+        "root_cause": "Cause 1"
+    }
+
+    mock_obj2 = MagicMock()
+    mock_obj2.metadata.distance = 0.2
+    mock_obj2.properties = {
+        "fix": "Enable connection retry logic",
+        "title": "Incident 2",
+        "root_cause": "Cause 2"
+    }
+
+    mock_collection = postmortem_writer.weaviate_collection
+    mock_collection.query.near_vector.return_value.objects = [mock_obj1, mock_obj2]
+
+    result = postmortem_writer._rank_fixes_from_weaviate("test root cause")
+
+    # Should return exactly 2, not padded to 3
+    assert len(result) == 2
+    assert result[0].fix == "Increase timeout configuration"
+    assert result[1].fix == "Enable connection retry logic"

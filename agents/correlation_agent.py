@@ -44,6 +44,7 @@ class CorrelationAgent:
         )
         return result.embeddings[0].values
 
+    # TODO: Extract dedup logic to shared utils module (agents/utils/dedup.py) — duplicated in postmortem_writer.py
     def _normalize_fix(self, fix: str) -> str:
         """Lowercase and collapse whitespace for case-insensitive fix deduplication."""
         return " ".join(fix.lower().split())

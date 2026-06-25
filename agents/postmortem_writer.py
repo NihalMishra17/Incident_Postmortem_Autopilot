@@ -53,6 +53,37 @@ class PostmortemWriter:
         self.weaviate_collection = self.weaviate_client.collections.get("PastIncident")
         self.genai_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
+    # TODO: Extract dedup logic to shared utils module (agents/utils/dedup.py) — duplicated from correlation_agent.py
+    def _normalize_fix(self, fix: str) -> str:
+        """Normalize fix text: lowercase and collapse whitespace for case-insensitive deduplication."""
+        return " ".join(fix.lower().split())
+
+    def _jaccard(self, a: str, b: str) -> float:
+        """Compute Jaccard similarity between two strings as token sets (intersection / union). Returns 1.0 if both are empty."""
+        sa, sb = set(a.split()), set(b.split())
+        if not sa and not sb:
+            return 1.0
+        return len(sa & sb) / len(sa | sb)
+
+    def _deduplicate_fixes(self, candidates: list, threshold: float = 0.85) -> list:
+        """Remove semantically similar fixes using two-phase dedup: exact match, then Jaccard; return up to 3 unique FixCandidate objects."""
+        seen_normalized: list[str] = []
+        unique: list = []
+        for candidate in candidates:
+            fix_text = candidate.fix
+            norm = self._normalize_fix(fix_text)
+            # Phase 1: reject exact normalized match (case-insensitive, whitespace-collapsed)
+            if norm in seen_normalized:
+                continue
+            # Phase 2: reject semantically similar fixes (Jaccard token similarity >= 0.85)
+            if any(self._jaccard(norm, s) >= threshold for s in seen_normalized):
+                continue
+            seen_normalized.append(norm)
+            unique.append(candidate)
+            if len(unique) == 3:
+                break
+        return unique
+
     @retry(
         stop=stop_after_attempt(5),
         wait=wait_exponential(multiplier=1, min=2, max=30),
@@ -60,19 +91,25 @@ class PostmortemWriter:
         reraise=True,
     )
     def _rank_fixes_from_weaviate(self, root_cause: str) -> list:
-        """Embed root cause and search Weaviate for semantically similar incidents to rank fix candidates.
+        """Rank fix suggestions using semantic search and deduplication.
 
-        Generates a vector embedding of the provided root cause, queries the PastIncident
-        collection for the 3 most similar verified incidents using cosine distance, and
-        derives fix suggestions ranked by similarity confidence. Returns exactly 3 candidates;
-        pads with low-confidence fallbacks if fewer than 3 are found.
+        Over-fetches 10 similar incidents from Weaviate, applies two-phase deduplication
+        (exact normalized match + Jaccard ≥ 0.85), and returns up to 3 unique FixCandidate
+        objects ranked by vector similarity confidence. Falls back to single generic fix on error.
+
+        Process:
+        1. Embed root_cause via Gemini embedding model.
+        2. Query PastIncident collection with limit=10 (over-fetch for dedup headroom).
+        3. Build FixCandidate objects with confidence derived from cosine distance.
+        4. Deduplicate using exact + Jaccard heuristic, return ≤ 3 unique.
+        5. On any error, return fallback generic fix (confidence 0.3).
 
         Args:
             root_cause: Text description of the incident root cause to embed.
 
         Returns:
-            List of exactly 3 FixCandidate objects, ranked descending by confidence.
-            Confidence is derived from cosine distance: 1.0 - (distance / 2.0), bounded [0.0, 1.0].
+            List of ≤ 3 FixCandidate objects, ranked descending by confidence.
+            Confidence is: 1.0 - (distance / 2.0), clamped to [0.0, 1.0].
         """
         try:
             # Embed root cause
@@ -81,10 +118,10 @@ class PostmortemWriter:
             )
             vector = response.embeddings[0].values
 
-            # Query for similar incidents
+            # Query for similar incidents - over-fetch to allow for deduplication
             results = self.weaviate_collection.query.near_vector(
                 near_vector=vector,
-                limit=3,
+                limit=10,
                 return_metadata=MetadataQuery(distance=True),
                 return_properties=["fix", "title", "root_cause"]
             )
@@ -99,28 +136,19 @@ class PostmortemWriter:
                 fix = obj.properties["fix"]
                 candidates.append(FixCandidate(fix=fix, confidence=confidence, reasoning=reasoning))
 
-            # Pad to 3 with fallback if needed
-            while len(candidates) < 3:
-                candidates.append(
-                    FixCandidate(
-                        fix="Inspect recent deployments and roll back if necessary",
-                        confidence=0.3,
-                        reasoning="Generated without historical correlation"
-                    )
-                )
-
-            return candidates
+            # Deduplicate to return up to 3 unique fixes
+            return self._deduplicate_fixes(candidates, threshold=0.85)
 
         except Exception as e:
             logger.warning("Failed to rank fixes from Weaviate: %s", e)
-            # Return 3 fallback candidates
+            # Return single fallback candidate
             return [
                 FixCandidate(
                     fix="Inspect recent deployments and roll back if necessary",
                     confidence=0.3,
                     reasoning="Generated without historical correlation"
                 )
-            ] * 3
+            ]
 
     def process_batch(self, alerts: list[dict]) -> list[dict]:
         """Generate postmortems for all alerts and flush Kafka producer once per batch.

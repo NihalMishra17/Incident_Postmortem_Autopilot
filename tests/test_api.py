@@ -910,18 +910,31 @@ def test_verify_postmortem_invalid_fix_index_negative(client):
 
 
 def test_verify_postmortem_invalid_fix_index_too_large(client):
-    """PATCH /postmortems/{id}/verify with selected_fix_index=3 should return 422."""
-    response = client.patch(
-        "/postmortems/test-id/verify",
-        json={
-            "confirmed_root_cause": "Root cause",
-            "selected_fix_index": 3,
-            "verified_by": "user@example.com",
-        },
-    )
+    """PATCH /postmortems/{id}/verify with selected_fix_index=3 should return 400 at runtime bounds check."""
+    pm = {
+        "incident_id": "test-id",
+        "title": "Test Incident",
+        "severity": "high",
+        "service": "test-service",
+        "affected_services": ["test"],
+        "suggested_fixes": MOCK_SUGGESTED_FIXES,  # Has 3 fixes (indices 0,1,2)
+    }
 
-    assert response.status_code == 422
-    assert "detail" in response.json()
+    mock_redis = MagicMock()
+    mock_redis.get.return_value = json.dumps(pm)
+
+    with patch("api.main._redis_client", mock_redis):
+        response = client.patch(
+            "/postmortems/test-id/verify",
+            json={
+                "confirmed_root_cause": "Root cause",
+                "selected_fix_index": 3,
+                "verified_by": "user@example.com",
+            },
+        )
+
+    assert response.status_code == 400
+    assert "out of bounds" in response.json()["detail"]
 
 
 def test_verify_postmortem_index_out_of_bounds_runtime(client):
@@ -1158,6 +1171,65 @@ def test_lifespan_context_manager():
             
             # After exiting context, verify shutdown was called
             mock_shutdown.assert_called_once()
-    
+
     # Run the async test
     asyncio.run(run_lifespan())
+
+
+def test_verify_postmortem_out_of_bounds_runtime(client):
+    """PATCH /postmortems/{id}/verify with selected_fix_index beyond available fixes should return 400."""
+    pm = {
+        "incident_id": "pm-oob-test",
+        "title": "Test Incident",
+        "severity": "high",
+        "service": "test-service",
+        "affected_services": ["test"],
+        "suggested_fixes": [MOCK_SUGGESTED_FIXES[0], MOCK_SUGGESTED_FIXES[1]],  # Only 2 fixes
+    }
+
+    mock_redis = MagicMock()
+    mock_redis.get.return_value = json.dumps(pm)
+
+    with patch("api.main._redis_client", mock_redis):
+        response = client.patch(
+            "/postmortems/pm-oob-test/verify",
+            json={
+                "confirmed_root_cause": "Root cause",
+                "selected_fix_index": 5,
+                "verified_by": "user@example.com",
+            },
+        )
+
+    assert response.status_code == 400
+    assert "out of bounds" in response.json()["detail"]
+
+
+def test_verify_postmortem_valid_fix_index_zero(client):
+    """PATCH /postmortems/{id}/verify with selected_fix_index=0 should succeed."""
+    pm = {
+        "incident_id": "pm-valid-zero",
+        "title": "Test Incident",
+        "severity": "medium",
+        "service": "test-service",
+        "affected_services": ["test"],
+        "suggested_fixes": MOCK_SUGGESTED_FIXES,
+    }
+
+    mock_redis = MagicMock()
+    mock_redis.get.return_value = json.dumps(pm)
+
+    with patch("api.main._redis_client", mock_redis), \
+         patch("api.main._embed_and_upsert_to_weaviate"):
+        response = client.patch(
+            "/postmortems/pm-valid-zero/verify",
+            json={
+                "confirmed_root_cause": "Root cause verified",
+                "selected_fix_index": 0,
+                "verified_by": "engineer@example.com",
+            },
+        )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["verified"] is True
+    assert result["incident_id"] == "pm-valid-zero"
