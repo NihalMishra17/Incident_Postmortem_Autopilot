@@ -5,7 +5,7 @@ Run as: python -m agents.pipeline with WINDOW_SIZE_SECONDS and MAX_ALERTS_PER_WI
 """
 from dotenv import load_dotenv
 from pathlib import Path
-load_dotenv(Path(__file__).parent.parent / ".env")
+load_dotenv(Path(__file__).parent.parent / ".env", override=True)
 import logging_config
 import json
 import logging
