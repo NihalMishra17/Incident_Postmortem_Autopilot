@@ -178,7 +178,7 @@ This feedback loop means every human correction improves future correlation and 
 | Vector database | Weaviate 1.24 | Semantic incident correlation + fix ranking |
 | Graph database | Neo4j 5.18 | Service dependency graph (blast radius) |
 | LLM orchestration | DSPy 2.5 | Structured RCA and postmortem generation |
-| LLM + embeddings | Gemini 2.0 Flash / gemini-embedding-001 | Language model and vector embeddings |
+| LLM + embeddings | Gemini 2.5 Flash / gemini-embedding-001 | Language model and vector embeddings |
 | Caching | Redis 7.2 (AOF) | Postmortem TTL cache with persistence |
 | API | FastAPI 0.115 + Uvicorn | REST endpoints + Prometheus metrics |
 | Frontend | React 18 + Vite + Tailwind CSS | Incident browsing and verification UI |
@@ -436,7 +436,7 @@ All variables have working defaults except `GEMINI_API_KEY`.
 GEMINI_API_KEY=                         # Google AI Studio or Vertex AI key
 
 # Gemini
-GEMINI_MODEL=gemini-2.0-flash           # LLM model used by DSPy and PostmortemWriter
+GEMINI_MODEL=gemini-2.5-flash           # LLM model used by DSPy and PostmortemWriter
 
 # Kafka
 KAFKA_BOOTSTRAP_SERVERS=localhost:9092

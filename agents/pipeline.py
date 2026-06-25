@@ -103,7 +103,7 @@ def run():
 
     import dspy
     lm = dspy.LM(
-        f"gemini/{os.getenv('GEMINI_MODEL', 'gemini-2.0-flash')}",
+        f"gemini/{os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')}",
         api_key=os.getenv("GEMINI_API_KEY"),
         num_retries=5,
         max_tokens=8192,
