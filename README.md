@@ -6,6 +6,7 @@ An event-driven multi-agent system that autonomously generates incident postmort
 
 ## Table of Contents
 
+- [Screenshots](#screenshots)
 - [Architecture](#architecture)
 - [Agent Pipeline](#agent-pipeline)
 - [Human Verification Loop](#human-verification-loop)
@@ -20,6 +21,48 @@ An event-driven multi-agent system that autonomously generates incident postmort
 - [Observability](#observability)
 - [Testing](#testing)
 - [Known Limitations](#known-limitations)
+
+---
+
+## Screenshots
+
+### Incident Feed + Postmortem Detail
+
+The left sidebar lists every generated postmortem, labelled by affected service and severity. Clicking an incident loads the full postmortem — root cause, timeline, blast radius map, remediation, and prevention steps — in the main panel.
+
+![Incident feed and postmortem detail](screenshots/screenshot-incident-feed.png)
+
+---
+
+### Blast Radius Graph
+
+Clicking the inline blast radius map expands it into a full-screen D3 hub-and-spoke visualisation. The central node is the incident service; spokes radiate outward to every transitively affected downstream service (up to 3 hops in Neo4j).
+
+![Blast radius graph expanded](screenshots/screenshot-blast-radius.png)
+
+---
+
+### Remediation, Prevention + Verify Panel
+
+Scrolling down reveals the AI-generated remediation steps and structured prevention recommendations, followed by the verification panel where an engineer confirms the root cause and selects a fix.
+
+![Remediation, prevention and verify panel](screenshots/screenshot-remediation-verify.png)
+
+---
+
+### Fix Candidate Selection
+
+The verify panel surfaces up to three semantically deduplicated fix suggestions ranked by cosine similarity to past verified incidents. Each candidate shows a confidence score and a "Similar to:" citation. Engineers can select one, or write a custom fix not in the list.
+
+![Fix candidate selection and verify form](screenshots/screenshot-fix-candidates.png)
+
+---
+
+### Verified Postmortem
+
+Once submitted, the postmortem is marked `Verified` with the engineer's identity and timestamp. The confirmed root cause and chosen fix are persisted to Weaviate, closing the feedback loop for future correlation.
+
+![Verified postmortem state](screenshots/screenshot-verified.png)
 
 ---
 
@@ -48,7 +91,7 @@ An event-driven multi-agent system that autonomously generates incident postmort
 │       │                                                              │
 │       ▼                                                              │
 │  PostmortemWriter ── DSPy Predict ──▶ structured postmortem          │
-│       │               └─ Weaviate (ranked fix candidates)           │
+│       │               └─ Weaviate (deduped ranked fix candidates)   │
 │       │                                                              │
 └───────┼──────────────────────────────────────────────────────────────┘
         │  postmortem JSON
@@ -93,7 +136,7 @@ Accumulates raw Kafka messages into per-service buckets over `WINDOW_SIZE_SECOND
 
 - Concatenates all alert messages and service names in a batch into a single query string (capped at 4 096 chars).
 - Embeds the query **once** per batch using Gemini `gemini-embedding-001` — not once per alert — to avoid redundant API calls.
-- Searches the Weaviate `PastIncident` collection for the 3 nearest neighbours and attaches them to every alert in the batch.
+- Over-fetches up to 10 candidate incidents from Weaviate, then applies two-phase deduplication (exact normalized title match, then Jaccard similarity ≥ 0.85) before returning the top 3 unique results.
 - Retries Gemini 429 responses up to 5 times with exponential backoff (1 s – 60 s) via Tenacity.
 
 ### RCAAgent
@@ -105,8 +148,7 @@ Accumulates raw Kafka messages into per-service buckets over `WINDOW_SIZE_SECOND
 ### PostmortemWriter
 
 - Runs `DSPy Predict` with a typed `PostmortemSignature` to generate title, root cause, timeline, remediation, and prevention fields.
-- Embeds the generated root cause and searches Weaviate for the 3 most similar verified incidents to produce ranked `FixCandidate` objects (confidence derived from cosine distance: `1.0 − distance / 2.0`).
-- Pads to exactly 3 fix candidates with low-confidence fallbacks if Weaviate returns fewer.
+- Over-fetches up to 10 candidate fixes from Weaviate, deduplicates with the same two-phase strategy (exact match + Jaccard ≥ 0.85), and returns up to 3 semantically unique `FixCandidate` objects ranked by confidence (derived from cosine distance: `1.0 − distance / 2.0`). Fewer than 3 are returned when not enough unique fixes exist — no padding with duplicates.
 - Validates all required output fields before publishing; raises on missing fields rather than silently emitting incomplete postmortems.
 - Calls `producer.flush()` **once** per batch (not once per message) to reduce network overhead.
 
@@ -116,7 +158,7 @@ Accumulates raw Kafka messages into per-service buckets over `WINDOW_SIZE_SECOND
 
 AI-generated postmortems are cached in Redis but **never** written to Weaviate until a human verifies them. The `PATCH /postmortems/{incident_id}/verify` endpoint:
 
-1. Accepts `confirmed_root_cause` + one of: `selected_fix_index` (0–2, picks from AI-ranked suggestions), `custom_fix` (freeform), or `confirmed_fix` (deprecated alias for `custom_fix`).
+1. Accepts `confirmed_root_cause` + one of: `selected_fix_index` (any non-negative integer, bounds-checked at runtime against the actual number of suggestions), `custom_fix` (freeform), or `confirmed_fix` (deprecated alias for `custom_fix`).
 2. Embeds the confirmed root cause + fix via Gemini and upserts a `PastIncident` document into Weaviate.
 3. Marks the postmortem `verified=true` in Redis.
 4. Returns 409 if already verified — preventing duplicate Weaviate writes (Weaviate has no uniqueness constraint; Redis is the dedup gate).
@@ -141,7 +183,7 @@ This feedback loop means every human correction improves future correlation and 
 | API | FastAPI 0.115 + Uvicorn | REST endpoints + Prometheus metrics |
 | Frontend | React 18 + Vite + Tailwind CSS | Incident browsing and verification UI |
 | Visualization | D3 (inline SVG) | Blast radius graph |
-| Testing (Python) | pytest + unittest.mock | 186 tests |
+| Testing (Python) | pytest + unittest.mock | 213 tests |
 | Testing (frontend) | Vitest 2 + React Testing Library | 64 tests |
 
 ---
@@ -151,6 +193,8 @@ This feedback loop means every human correction improves future correlation and 
 **Windowed batch processing** — Alerts are grouped by service over a 30-second window before any LLM calls. This means one embedding call and one Kafka flush per batch regardless of how many alerts arrive, which dramatically reduces API cost and latency under burst traffic.
 
 **Single embedding per batch** — The CorrelationAgent embeds a concatenated query for the entire service batch rather than embedding each alert individually. For a 10-alert burst on one service this is a 10× reduction in Gemini API calls.
+
+**Two-phase deduplication** — Both CorrelationAgent and PostmortemWriter over-fetch 10 candidates from Weaviate, then filter with exact normalized text matching followed by Jaccard token similarity (threshold ≥ 0.85). This prevents near-duplicate past incidents or fix suggestions from dominating the results.
 
 **Stateless agents** — Each agent takes a dict in and returns an enriched dict out. No shared state between agents. This makes the pipeline trivially testable and easy to replace individual agents.
 
@@ -176,9 +220,9 @@ incident_postmortem/
 ├── agents/                         # Multi-agent pipeline
 │   ├── pipeline.py                 # Kafka consumer loop, windowed AlertBatcher, orchestration
 │   ├── triage_agent.py             # Severity classification + Neo4j blast radius
-│   ├── correlation_agent.py        # Gemini embedding + Weaviate semantic search
+│   ├── correlation_agent.py        # Gemini embedding + Weaviate semantic search + dedup
 │   ├── rca_agent.py                # DSPy ChainOfThought root cause analysis
-│   └── postmortem_writer.py        # DSPy Predict postmortem + fix ranking + Kafka publish
+│   └── postmortem_writer.py        # DSPy Predict postmortem + deduped fix ranking + Kafka publish
 │
 ├── api/
 │   └── main.py                     # FastAPI app: lifespan, REST endpoints, Redis cache,
@@ -199,6 +243,8 @@ incident_postmortem/
 │
 ├── scripts/
 │   └── clean_weaviate.py           # Weaviate maintenance CLI (list / delete / wipe-and-reseed)
+│
+├── screenshots/                    # UI screenshots for documentation
 │
 ├── frontend/                       # React UI
 │   ├── src/
@@ -222,7 +268,7 @@ incident_postmortem/
 │   ├── vite.config.js
 │   └── vitest.config.ts
 │
-├── tests/                          # Python test suite (186 tests)
+├── tests/                          # Python test suite (213 tests)
 │   ├── conftest.py
 │   ├── test_pipeline.py            # Pipeline, AlertBatcher, windowing logic
 │   ├── test_api.py                 # FastAPI endpoints + verify logic
@@ -443,8 +489,7 @@ Returns all postmortems currently cached in Redis.
       "prevention": "...",
       "suggested_fixes": [
         { "fix": "...", "confidence": 0.92, "reasoning": "Similar to: ..." },
-        { "fix": "...", "confidence": 0.75, "reasoning": "..." },
-        { "fix": "...", "confidence": 0.30, "reasoning": "Generated without historical correlation" }
+        { "fix": "...", "confidence": 0.75, "reasoning": "..." }
       ],
       "generated_at": "2026-06-21T10:00:00Z",
       "verified": false
@@ -452,6 +497,8 @@ Returns all postmortems currently cached in Redis.
   ]
 }
 ```
+
+`suggested_fixes` contains up to 3 semantically unique candidates. Fewer than 3 are returned when the Weaviate corpus doesn't yield enough distinct results after deduplication.
 
 ### `GET /postmortems/{incident_id}`
 
@@ -500,7 +547,7 @@ Engineer verification. Accepts exactly one fix selection mode.
 | Field | Description |
 |---|---|
 | `confirmed_root_cause` | Required. Engineer-confirmed root cause (1–4096 chars). |
-| `selected_fix_index` | Pick from AI-ranked suggestions at index 0, 1, or 2. |
+| `selected_fix_index` | Any non-negative integer. Selects from the AI-ranked `suggested_fixes` array; bounds-checked at runtime. |
 | `custom_fix` | Freeform fix description not in the ranked list. |
 | `confirmed_fix` | Deprecated alias for `custom_fix`, still accepted. |
 | `verified_by` | Engineer identifier (email or username). |
@@ -579,7 +626,7 @@ The React UI requires no configuration — it talks to the API at `http://localh
 | `IncidentFeed` | `IncidentFeed.jsx` | Sidebar incident list. On mobile: full-screen drawer with slide animation. On desktop: resizable via drag handle (180–400 px, localStorage-persisted). |
 | `PostmortemDetail` | `PostmortemDetail.jsx` | Full postmortem with ReactMarkdown rendering. Blast radius graph is clickable to open in a modal overlay. |
 | `BlastRadiusGraph` | `BlastRadiusGraph.jsx` | D3 hub-and-spoke SVG. Hub = incident node. Spokes = affected services. Click inline graph to expand in a centered modal (620×360). |
-| `FixCandidateList` | `FixCandidateList.jsx` | Three ranked AI fix suggestions with confidence scores. Select one or write a custom fix. |
+| `FixCandidateList` | `FixCandidateList.jsx` | Up to three semantically deduplicated AI fix suggestions with confidence scores. Select one or write a custom fix. |
 | `VerifyPanel` | `VerifyPanel.jsx` | `PATCH /verify` form. Strips markdown from the prefilled root cause textarea. |
 
 **Mobile behaviour:** sidebar collapses to a hidden fixed drawer; hamburger icon opens it; selecting an incident closes it automatically; Escape key also closes it.
@@ -615,7 +662,7 @@ Scrape with any Prometheus-compatible collector. The `/metrics` endpoint itself 
 
 ## Testing
 
-### Python (186 tests)
+### Python (213 tests)
 
 ```bash
 # Run all tests
@@ -633,10 +680,11 @@ pytest --cov=. --cov-report=term-missing
 
 Tests use `unittest.mock` throughout — no live infrastructure required. The test suite covers:
 - Pipeline windowing logic and alert batching
-- Each agent's processing and error handling
-- FastAPI endpoint contracts (happy path, 404/409/500/503)
-- Verification endpoint (all fix modes, dedup logic, Weaviate ordering)
+- Each agent's processing and error handling, including deduplication scenarios
+- FastAPI endpoint contracts (happy path, 400/404/409/500/503)
+- Verification endpoint (all fix modes, dedup logic, runtime bounds checking, Weaviate ordering)
 - Infrastructure client factories
+- Weaviate maintenance CLI
 
 ### Frontend (64 tests)
 
@@ -661,4 +709,4 @@ Coverage includes: `ThemeContext`, `BlastRadiusGraph`, `FixCandidateList`, `Veri
 - **No rate limiting** — The API has no request throttling. Use a reverse proxy (nginx, Caddy) or API gateway in production.
 - **Sequential agent processing** — Agents run one service batch at a time per window. Parallelise with `concurrent.futures` or a task queue for high-throughput scenarios.
 - **Redis TTL expiry** — Verified postmortems expire from Redis after `REDIS_TTL` seconds (default 24 h). They remain in Weaviate permanently, but the REST API won't surface them after TTL. Extend TTL or add a secondary store for long-term retention.
-- **Test blast radius** — The UI blast radius graph shows one node for the seeded test incidents because each seed record lists a single service. Real pipeline data with multi-hop Neo4j graphs will show the full spoke layout.
+- **Shared dedup utility** — Deduplication logic is implemented identically in both `CorrelationAgent` and `PostmortemWriter`. A future refactor will extract it to `agents/utils/dedup.py`.

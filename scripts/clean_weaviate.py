@@ -117,7 +117,6 @@ def main():
                 print(f"Warning during deletion: {e}")
 
             init_schema(client)
-            genai.configure(api_key=os.environ["GEMINI_API_KEY"])
             genai_client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
             collection = client.collections.get("PastIncident")
