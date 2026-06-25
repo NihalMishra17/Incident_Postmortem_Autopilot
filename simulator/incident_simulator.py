@@ -2,8 +2,11 @@
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from dotenv import load_dotenv
-load_dotenv(Path(__file__).parent.parent / ".env", override=True)
+import os
+from dotenv import dotenv_values
+for _k, _v in dotenv_values(Path(__file__).parent.parent / ".env").items():
+    if not os.environ.get(_k):
+        os.environ[_k] = _v or ""
 import argparse
 import random
 import signal
