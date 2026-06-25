@@ -1,4 +1,6 @@
 """Generates synthetic incidents and logs to Kafka for testing the postmortem pipeline."""
+from dotenv import load_dotenv
+load_dotenv()
 import argparse
 import random
 import signal
